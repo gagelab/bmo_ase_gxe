@@ -3,7 +3,8 @@
 TODO:
  - Get B73 Mo17 vcf code from Sontosh
  - Results of script 2 (DAP analysis) don't agree with expected (printed at end)
-
+ - Remove mechanistic section 6? Null results, low sample size(7 DEG TFs)
+ - Remove marginal sensitivity section 7. Tests results with pvalue near .05, against some other parameters
 
 All commands run from the project root:
 ```
