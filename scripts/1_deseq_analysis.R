@@ -116,7 +116,7 @@ ge <- results(dds2, contrast = list("EnvironmentMO.AlleleAlt",
 
 # Save DESeq2 objects for downstream analyses (co-expression VST extraction, etc.)
 save(mo_ratio, nc_ratio, ge, dds2, meta2, counts2,
-     file = file.path(DATA_DIR, "DESeq2_results.rdata"))
+     file = file.path(DATA_DIR, "data/DESeq2_results.rdata"))
 message("DESeq2 results saved to data/DESeq2_results.rdata")
 
 # ------------------------------------------------------------------------------

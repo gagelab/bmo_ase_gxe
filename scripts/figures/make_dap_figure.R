@@ -37,7 +37,7 @@ dap_binary = dap_gene %>%
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
           axis.title.x = element_blank(),
           legend.position = "none") +
-    labs(y="Proportion genes with \u22651\ngenotype-specific DAP peaks",
+    labs(y="Proportion genes with\nallele-specific DAP peaks",
          title="A") +
     # Make extra space for the p-value text
     scale_y_continuous(expand=expansion(mult=c(0,0.25)))
@@ -54,7 +54,7 @@ dap_binary = dap_gene %>%
     theme_classic() +
     theme(legend.position="none") +
     scale_x_continuous(breaks=seq(0, 10)) +
-    labs(y="Density", x="Number of genotype-specific DAP peaks",
+    labs(y="Density", x="Number of genotype-specific\nDAP peaks",
          title="B") +
     # Make extra space for the p-value text
     scale_y_continuous(expand=expansion(mult=c(0,0.2)))
@@ -101,7 +101,7 @@ indel_test_results = tibble(
     theme(axis.text.x = element_blank(),
           axis.ticks.x = element_blank(),
           axis.title.x = element_blank()) +
-    labs(y="Proportion genes with genotype-specific\nDAPpeaks containing \u22651 small indel",
+    labs(y="Proportion genes with\nindels disrupting DAP peaks",
          title="D") +
     scale_y_continuous(expand=expansion(mult=c(0,0.25)))
 )
@@ -122,30 +122,34 @@ indel_test_results = tibble(
 )
 
 # Make row titles 
-r1 = ggplot(aes(fill=is_gxe), data=dap_indel) +
+r1 = ggplot() +
   annotate("text",
-           label="Allele-specific DAP-seq peaks",
-           x=0,
+           label="Allele-specific DAP-seq peaks:",
+           x=-0.13,
            y=0.5,
            size=5.5,
            hjust=0,
            vjust=0.5) +
-  scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
-  scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
-  theme_void()
+  # scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  # scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  theme_void()  +
+  coord_cartesian(xlim=c(0,1), ylim=c(0,1), clip="off")
+  # theme(axis.title.y = element_text(angle = 0, vjust = 0.5))
 
 r2 = ggplot(aes(fill=is_gxe), data=dap_indel) +
   annotate("text",
-           label="Indels overlapping allele-specific DAP-seq peaks",
-           x=0,
+           label="Indels overlapping allele-specific DAP-seq peaks:",
+           x=-0.13,
            y=0.5,
            size=5.5,
            hjust=0,
            vjust=0.5) +
-  scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
-  scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  # scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  # scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
   theme_void() +
-  theme(plot.margin=margin(6,0,0,0))
+  theme(plot.margin=margin(6,0,0,0)) +
+  coord_cartesian(xlim=c(0,1), ylim=c(0,1), clip="off")
+
 
 
 #### Compile figures together ####
@@ -162,11 +166,11 @@ layout = c("AAA
             FGH
             FGH")  
 
-(r1 +
+( r1 +
   dap_fisher + dap_mw + or_fig +
-  r2 +
-  dap_indel_or + dap_indel_dist + guide_area()) + 
-  patchwork::plot_layout(guides = "collect", # ncol=3, nrow=4,
+  r2 + 
+  dap_indel_or + dap_indel_dist + guide_area()) +
+  patchwork::plot_layout(guides = "collect", #ncol=3, nrow=2,
                          # heights = c(1,4,1,4),
                          design = layout) &
   # plot_annotation(tag_levels = "A") & 
@@ -174,7 +178,7 @@ layout = c("AAA
                     values=c("black", "blue")) &
   theme(legend.position = "right",
         legend.title = element_blank(),
-        plot.title.position = "plot") 
-ggsave("figures/3_dap_fig.pdf", width=7.5, height=10)
-ggsave("figures/3_dap_fig.png", width=7.5, height=10)
+        plot.title.position = "plot")
+ggsave("figures/3_dap_fig.pdf", width=10, height=6)
+ggsave("figures/3_dap_fig.png", width=10, height=6)
 
