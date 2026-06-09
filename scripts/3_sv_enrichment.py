@@ -148,18 +148,7 @@ for vcf_class in list(VCF_FILES.keys()) + ["sv_total"]:
 res_df = pd.DataFrame(results)
 
 # ── Distance-from-TSS analysis ─────────────────────────────────────────────────
-print("\n── Distance-from-TSS analysis (small indels, binned) ──")
-
-# Build TSS position arrays per chromosome — computed once, outside all loops.
-# tss_by_chr: chrom → (tss_positions array, is_gxe bool array, is_bg bool array,
-#                       upstream_sign array)
-# upstream_sign: +1 strand genes look upstream (lower coords), -1 strand genes
-# look upstream (higher coords). For a ± window we just use absolute distance,
-# so we store the raw TSS and compute the window symmetrically.
-#
-# For each gene and bin [b_start, b_end):
-#   + strand: upstream window = [tss - b_end, tss - b_start)
-#   - strand: upstream window = [tss + b_start, tss + b_end)
+print("\n── Distance-from-TSS analysis (all variant classes, binned) ──")
 
 # Pre-extract columns as numpy arrays for speed
 chroms   = dap["chr"].values
@@ -172,45 +161,47 @@ is_bg    = dap["is_bg"].values
 # TSS: prom_s + PROMO_WIN for + strand; prom_e - PROMO_WIN for - strand
 tss = np.where(strands == "+", prom_s + PROMO_WIN, prom_e - PROMO_WIN)
 
-# Use the already-loaded small-indel VCF
-vcf_small = vcf_cache["small_indel"]
-
 bin_edges  = np.arange(0, PROMO_WIN + 1, 100)
-bin_labels = [f"{b}–{b+100}" for b in bin_edges[:-1]]
+bin_labels = [f"{b}-{b+100}" for b in bin_edges[:-1]]
 
 # Pre-group gene indices by chromosome so the outer bin loop doesn't re-scan
 genes_by_chr = {}
 for chrom in set(chroms):
     genes_by_chr[chrom] = np.where(chroms == chrom)[0]
 
-bin_results = []
-for b_start, b_end, label in zip(bin_edges[:-1], bin_edges[1:], bin_labels):
-    # Per-gene binary flag: has ≥1 small indel in this distance band?
-    has_indel = np.zeros(len(dap), dtype=bool)
+all_bin_results = []   # collects rows across all variant classes
 
-    for chrom, gene_idx in genes_by_chr.items():
-        if chrom not in vcf_small:
-            continue
-        pos_arr = vcf_small[chrom]   # pre-sorted array, built once above
+for vcf_class, vcf_data in vcf_cache.items():
+    print(f"\n  {vcf_class}:")
+    for b_start, b_end, label in zip(bin_edges[:-1], bin_edges[1:], bin_labels):
+        has_var = np.zeros(len(dap), dtype=bool)
 
-        g_tss     = tss[gene_idx]
-        g_strands = strands[gene_idx]
+        for chrom, gene_idx in genes_by_chr.items():
+            if chrom not in vcf_data:
+                continue
+            pos_arr   = vcf_data[chrom]
+            g_tss     = tss[gene_idx]
+            g_strands = strands[gene_idx]
 
-        # Upstream window per gene (vectorised)
-        win_s = np.where(g_strands == "+", g_tss - b_end,   g_tss + b_start)
-        win_e = np.where(g_strands == "+", g_tss - b_start, g_tss + b_end)
+            win_s = np.where(g_strands == "+", g_tss - b_end,   g_tss + b_start)
+            win_e = np.where(g_strands == "+", g_tss - b_start, g_tss + b_end)
 
-        lo = np.searchsorted(pos_arr, win_s, side="left")
-        hi = np.searchsorted(pos_arr, win_e, side="right")
-        has_indel[gene_idx] = (hi - lo) > 0
+            lo = np.searchsorted(pos_arr, win_s, side="left")
+            hi = np.searchsorted(pos_arr, win_e, side="right")
+            has_var[gene_idx] = (hi - lo) > 0
 
-    pct_gxe = 100 * has_indel[is_gxe].mean() if is_gxe.any() else 0.0
-    pct_bg  = 100 * has_indel[is_bg].mean()  if is_bg.any()  else 0.0
-    bin_results.append(dict(distance_band=label, d_start=b_start,
-                            pct_gxe=pct_gxe, pct_bg=pct_bg))
-    print(f"  {label}: GxE {pct_gxe:.1f}%  BG {pct_bg:.1f}%")
+        pct_gxe = 100 * has_var[is_gxe].mean() if is_gxe.any() else 0.0
+        pct_bg  = 100 * has_var[is_bg].mean()  if is_bg.any()  else 0.0
+        all_bin_results.append(dict(
+            variant_class=vcf_class,
+            distance_band=label,
+            d_start=b_start,
+            pct_gxe=pct_gxe,
+            pct_bg=pct_bg,
+        ))
+        print(f"    {label}: GxE {pct_gxe:.1f}%  BG {pct_bg:.1f}%")
 
-bin_df = pd.DataFrame(bin_results)
+bin_df = pd.DataFrame(all_bin_results)
 
 # ── Main enrichment figure ────────────────────────────────────────────────────
 print("\nGenerating figures …")
@@ -271,33 +262,47 @@ fig.savefig(out_fig, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"  Saved → {out_fig}")
 
-# ── Distance-from-TSS figure ──────────────────────────────────────────────────
-fig2, ax = plt.subplots(figsize=(8, 4))
-x = np.arange(len(bin_df))
-ax.plot(x, bin_df["pct_gxe"], "o-", color=colors["GxE-ASE"],  lw=2, label="GxE-ASE")
-ax.plot(x, bin_df["pct_bg"],  "s--", color=colors["Background"], lw=1.5, label="Background")
-ax.set_xticks(x)
-ax.set_xticklabels(bin_df["distance_band"], rotation=30, ha="right")
-ax.set_xlabel("Distance from TSS (bp, upstream)")
-ax.set_ylabel("% genes with small indel")
-ax.set_title("Small Indel Enrichment by Distance from TSS")
-ax.legend()
-ax2_r = ax.twinx()
-ax2_r.plot(x, bin_df["pct_gxe"] - bin_df["pct_bg"], "^-",
-           color="darkred", lw=1.5, alpha=0.7, label="GxE − BG")
-ax2_r.set_ylabel("Difference (GxE − BG, %)")
-ax2_r.legend(loc="upper right")
+# ── Distance-from-TSS figure (one panel per variant class) ───────────────────
+dist_classes = list(VCF_FILES.keys())
+fig2, axes2 = plt.subplots(1, len(dist_classes),
+                            figsize=(6 * len(dist_classes), 4),
+                            sharey=False)
+if len(dist_classes) == 1:
+    axes2 = [axes2]
+
+for ax2, vcf_class in zip(axes2, dist_classes):
+    sub = bin_df[bin_df["variant_class"] == vcf_class]
+    x   = np.arange(len(sub))
+    ax2.plot(x, sub["pct_gxe"], "o-", color=colors["GxE-ASE"],    lw=2,   label="GxE-ASE")
+    ax2.plot(x, sub["pct_bg"],  "s--", color=colors["Background"], lw=1.5, label="Background")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(sub["distance_band"], rotation=30, ha="right", fontsize=8)
+    ax2.set_xlabel("Distance from TSS (bp, upstream)")
+    ax2.set_ylabel("% genes with variant")
+    ax2.set_title(f"{class_labels.get(vcf_class, vcf_class)}\nby distance from TSS",
+                  fontsize=9)
+    ax2.legend(fontsize=8)
+    ax2_r = ax2.twinx()
+    ax2_r.plot(x, sub["pct_gxe"].values - sub["pct_bg"].values, "^-",
+               color="darkred", lw=1.5, alpha=0.7, label="GxE - BG")
+    ax2_r.set_ylabel("Difference (GxE - BG, %)", fontsize=8)
+    ax2_r.legend(loc="upper right", fontsize=7)
+
+fig2.suptitle(f"Variant Enrichment by Distance from TSS  |  ±{PROMO_WIN} bp window",
+              fontsize=10, fontweight="bold")
 fig2.tight_layout()
 out_fig2 = f"{FIGURES}/sv_distance_figure.png"
 fig2.savefig(out_fig2, dpi=150, bbox_inches="tight")
 plt.close()
-print(f"  Saved → {out_fig2}")
+print(f"  Saved -> {out_fig2}")
 
 # ── Save results ──────────────────────────────────────────────────────────────
 res_df.to_csv(f"{RESULTS}/sv_enrichment_results.tsv", sep="\t", index=False)
+bin_df.to_csv(f"{RESULTS}/sv_distance_results.tsv", sep="\t", index=False)
 sv_out_cols = ["gene", "chr", "strand", "is_gxe", "is_bg",
                "n_small_indel", "n_large_indel", "n_SNP", "n_sv_total", "has_any_sv"]
 dap[sv_out_cols].to_csv(f"{RESULTS}/sv_per_gene.tsv", sep="\t", index=False)
-print(f"  Saved → {RESULTS}/sv_enrichment_results.tsv")
-print(f"  Saved → {RESULTS}/sv_per_gene.tsv")
+print(f"  Saved -> {RESULTS}/sv_enrichment_results.tsv")
+print(f"  Saved -> {RESULTS}/sv_distance_results.tsv")
+print(f"  Saved -> {RESULTS}/sv_per_gene.tsv")
 print("\nDone.")

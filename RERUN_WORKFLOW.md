@@ -34,6 +34,15 @@ unzip "motifs.zip?download=1" -d data/epigenome/dap_seq/ && \
 rm "motifs.zip?download=1"
 ```
 
+To repeat the phenotypic GxE mapping and overlap with GxE genes, download these files into ./data/:
+ * HapMap3.1 GBS SNPs from "https://cornell.box.com/s/o7wtp1ewuqlw3dalr1920lungxnomnrg". The file name should be ZeaGBSv27_publicSamples_raw_AGPv4-181023.vcf.gz
+ * Sample info from "https://cornell.app.box.com/s/v5rsmdtdg0g5ecjtawfonvavuzuffp6z"
+
+Then, filter it to just IBM samples:
+```bash
+bash ./scripts/filter_ZeaGBS_to_IBM.sh
+```
+
 Compute SNPs, small Indels (<50bp) and large Indels (>50bp) between B73 and Mo17:
 TODO: Fill this in
 

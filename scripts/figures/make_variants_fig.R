@@ -66,7 +66,7 @@ fisher_bars = ggplot(sv_binary, aes(x=is_gxe, y=Proportion, fill=is_gxe)) +
         axis.title.x = element_blank()) +
   # Make extra space for the p-value text
   scale_y_continuous(expand=expansion(mult=c(0,0.25))) +
-  labs(y="Proportion of genes\nwith >1 variant")
+  labs(y="Proportion of genes\nwith \u22651 variant")
 mw_dists = ggplot(sv_continuous,
                   aes(Count, after_stat(density), fill=is_gxe)) +
   geom_histogram(alpha=0.3, position="identity", binwidth = 1) +

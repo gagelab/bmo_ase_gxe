@@ -5,9 +5,14 @@
 Generates three DAP-seq derived result files from raw peak files + annotation:
 
   1. results/dap_seq_per_gene.tsv
-       Per-gene peak counts in ±500 bp promoter windows (one row per universe gene).
+       Per-gene peak counts and variant-x-peak overlaps in ±500 bp promoter windows
+       (one row per universe gene).
        Columns: chr, prom_s, prom_e, strand, gene, is_gxe, is_bg,
-                n_b73_spec, n_shared, n_mo17_spec, n_diff, n_total, frac_diff, gene_class
+                n_b73_spec, n_shared, n_mo17_spec, n_diff, n_total, frac_diff, gene_class,
+                [small indel x peak] n_indel_b73spec, n_indel_mo17spec, n_indel_shared,
+                                     n_indel_no_peak, n_indel_genotype_spec, n_indel_total,
+                [SNP x peak]         n_snp_b73spec, n_snp_mo17spec, n_snp_shared,
+                                     n_snp_no_peak, n_snp_genotype_spec, n_snp_total
 
   2. results/dap_seq_per_tf.tsv
        Per-TF Fisher enrichment of GxE vs background genes.
@@ -17,9 +22,10 @@ Generates three DAP-seq derived result files from raw peak files + annotation:
                 log2OR_diff, log2OR_any, [key, v5_geneID, tf_family for annotated TFs]
 
   3. results/indel_dap_overlap_per_gene.tsv
-       Per-gene counts of small indels (< 50 bp) overlapping DAP peaks.
-       Columns: gene, is_gxe, is_bg, n_b73spec, n_mo17spec, n_shared,
-                n_no_peak, n_genotype_spec, n_total
+       Backward-compatible file: per-gene counts of small indels (< 50 bp)
+       overlapping DAP peaks. Columns: gene, is_gxe, is_bg, n_b73spec,
+       n_mo17spec, n_shared, n_no_peak, n_genotype_spec, n_total.
+       (All variant types are now also in dap_seq_per_gene.tsv.)
 
   This script replaces the inline Step 3 flag-update code in RERUN_WORKFLOW.md.
   Run after 1_deseq_analysis.R (which produces GxE_gene_IDs.txt / background_gene_IDs.txt).
@@ -33,6 +39,8 @@ Reads:
   data/tf_annotation.tsv   (stable TF → v5_geneID, tf_family lookup for expressed TFs)
   data/epigenome/dap_seq/normalized_specific_and_shared_peaks/.../*_withcoords.tsv
   data/Mo17_toB73v5_paf_syri_noStartPOS0_INDELs_less50bp.vcf
+  data/Mo17_toB73v5_paf_syri_noStartPOS0_INDELs_more50bp.vcf
+  data/Mo17_toB73v5_paf_syri_noStartPOS0_SNPs.vcf
 """
 
 import os
@@ -56,6 +64,8 @@ MO17_DIR  = (f"{DATA}/epigenome/dap_seq/normalized_specific_and_shared_peaks/"
              "Mo17_MATCH_B73v5-Mo17_specific_Mo17_shared")
 GFF        = f"{DATA}/annotation.gff"
 VCF_SMALL  = f"{DATA}/Mo17_toB73v5_paf_syri_noStartPOS0_INDELs_less50bp.vcf"
+VCF_LARGE  = f"{DATA}/Mo17_toB73v5_paf_syri_noStartPOS0_INDELs_more50bp.vcf"
+VCF_SNP    = f"{DATA}/Mo17_toB73v5_paf_syri_noStartPOS0_SNPs.vcf"
 PROMO_WIN  = 500   # bp on each side of TSS (0-based coords)
 
 # ── 1. Load gene sets ─────────────────────────────────────────────────────────
@@ -330,11 +340,10 @@ proms['gene_class']  = 'Other'
 proms.loc[proms['is_bg'],  'gene_class'] = 'Background'
 proms.loc[proms['is_gxe'], 'gene_class'] = 'GxE-ASE'
 
-col_order = ['chr', 'prom_s', 'prom_e', 'strand', 'gene', 'is_gxe', 'is_bg',
-             'n_b73_spec', 'n_shared', 'n_mo17_spec', 'n_diff', 'n_total',
-             'frac_diff', 'gene_class']
-proms[col_order].to_csv(f"{RESULTS}/dap_seq_per_gene.tsv", sep='\t', index=False)
-print(f"   Saved dap_seq_per_gene.tsv ({len(proms):,} genes)")
+col_order_dap = ['chr', 'prom_s', 'prom_e', 'strand', 'gene', 'is_gxe', 'is_bg',
+                 'n_b73_spec', 'n_shared', 'n_mo17_spec', 'n_diff', 'n_total',
+                 'frac_diff', 'gene_class']
+# variant x peak columns are appended below after section 6; file is written there
 print(f"   GxE genes with any DAP peak: "
       f"{((n_total > 0) & is_gxe_arr).sum()}/{n_gxe} "
       f"({100*((n_total > 0) & is_gxe_arr).sum()/n_gxe:.1f}%)")
@@ -393,34 +402,27 @@ top = tf_df.nsmallest(3, 'p_diff')[['TF', 'OR_diff', 'p_diff', 'padj_diff']]
 for _, r in top.iterrows():
     print(f"     {r['TF']:20s}  OR={r['OR_diff']:.3f}  p={r['p_diff']:.4g}  padj={r['padj_diff']:.4g}")
 
-# ── 6. Indel-overlap per gene ─────────────────────────────────────────────────
-print(f"\n6. Computing indel × DAP-peak overlaps...", flush=True)
-print(f"   Loading VCF: {Path(VCF_SMALL).name} ...", flush=True)
+# ── 6. Variant × DAP-peak overlaps per gene (all variant types) ───────────────
+print(f"\n6. Computing variant x DAP-peak overlaps (all variant types)...", flush=True)
 
-indels_by_chr = {}
-with open(VCF_SMALL) as fh:
-    for line in fh:
-        if line.startswith('#'):
-            continue
-        p = line.split('\t', 5)
-        chrom = p[0]
-        if not chrom.startswith('chr'):
-            chrom = 'chr' + chrom
-        pos = int(p[1])
-        indels_by_chr.setdefault(chrom, []).append(pos)
-
-# Sort and convert to arrays
-for chrom in indels_by_chr:
-    indels_by_chr[chrom] = np.array(sorted(indels_by_chr[chrom]), dtype=np.int64)
-
-n_total_indels = sum(len(v) for v in indels_by_chr.values())
-print(f"   Loaded {n_total_indels:,} small indels across {len(indels_by_chr)} chromosomes")
+def _load_vcf_positions(vcf_path):
+    """Load VCF positions into {chrom: sorted int64 array}."""
+    buf = {}
+    with open(vcf_path) as fh:
+        for line in fh:
+            if line.startswith('#'):
+                continue
+            p = line.split('\t', 5)
+            chrom = p[0]
+            if not chrom.startswith('chr'):
+                chrom = 'chr' + chrom
+            buf.setdefault(chrom, []).append(int(p[1]))
+    return {c: np.array(sorted(v), dtype=np.int64) for c, v in buf.items()}
 
 def _count_peak_hits_per_position(positions, peaks_s, peaks_e):
     """
-    For each position in `positions`, count how many peaks (pa_s[i], pa_e[i]) contain it.
-    Position pos is contained if pa_s[i] <= pos < pa_e[i].
-    Returns array of counts, same length as positions.
+    For each position, count how many [peaks_s, peaks_e) intervals contain it.
+    Returns int32 array aligned with positions.
     """
     out = np.zeros(len(positions), dtype=np.int32)
     for j, pos in enumerate(positions):
@@ -429,78 +431,117 @@ def _count_peak_hits_per_position(positions, peaks_s, peaks_e):
             out[j] = int(np.sum(peaks_e[:right] > pos))
     return out
 
-# Per-gene accumulators
-ig_n_b73spec  = np.zeros(n_p, dtype=np.int32)
-ig_n_mo17spec = np.zeros(n_p, dtype=np.int32)
-ig_n_shared   = np.zeros(n_p, dtype=np.int32)
-ig_n_no_peak  = np.zeros(n_p, dtype=np.int32)
+def _variant_peak_overlaps(vcf_by_chr, label):
+    """
+    For each gene promoter, count variants (from vcf_by_chr) that overlap
+    each peak type (B73-specific, Mo17-specific, shared, no peak).
+    Returns dict of prefix-named int32 arrays aligned with proms row order.
+    """
+    n_b73   = np.zeros(n_p, dtype=np.int32)
+    n_mo17  = np.zeros(n_p, dtype=np.int32)
+    n_sh    = np.zeros(n_p, dtype=np.int32)
+    n_none  = np.zeros(n_p, dtype=np.int32)
 
-for chrom, pc in _prom_idx.items():
-    if chrom not in indels_by_chr:
-        continue
-    all_pos = indels_by_chr[chrom]
-
-    pb73  = _all_b73spec_by_chr.get(chrom,  (np.array([], np.int64), np.array([], np.int64)))
-    pmo17 = _all_mo17spec_by_chr.get(chrom, (np.array([], np.int64), np.array([], np.int64)))
-    psh   = _all_shared_by_chr.get(chrom,   (np.array([], np.int64), np.array([], np.int64)))
-
-    for i in range(len(pc['row'])):
-        ps, pe, row = pc['prom_s'][i], pc['prom_e'][i], pc['row'][i]
-
-        # Indels in this promoter
-        lo = int(np.searchsorted(all_pos, ps,   side='left'))
-        hi = int(np.searchsorted(all_pos, pe,   side='left'))
-        if lo >= hi:
+    for chrom, pc in _prom_idx.items():
+        if chrom not in vcf_by_chr:
             continue
-        pos_in_prom = all_pos[lo:hi]
+        all_pos = vcf_by_chr[chrom]
+        pb73  = _all_b73spec_by_chr.get(chrom,  (np.array([], np.int64), np.array([], np.int64)))
+        pmo17 = _all_mo17spec_by_chr.get(chrom, (np.array([], np.int64), np.array([], np.int64)))
+        psh   = _all_shared_by_chr.get(chrom,   (np.array([], np.int64), np.array([], np.int64)))
 
-        # Count overlapping peaks per type per indel position
-        hits_b73  = _count_peak_hits_per_position(pos_in_prom, pb73[0],  pb73[1])
-        hits_mo17 = _count_peak_hits_per_position(pos_in_prom, pmo17[0], pmo17[1])
-        hits_sh   = _count_peak_hits_per_position(pos_in_prom, psh[0],   psh[1])
+        for i in range(len(pc['row'])):
+            ps, pe, row = pc['prom_s'][i], pc['prom_e'][i], pc['row'][i]
+            lo = int(np.searchsorted(all_pos, ps, side='left'))
+            hi = int(np.searchsorted(all_pos, pe, side='left'))
+            if lo >= hi:
+                continue
+            pos_in_prom = all_pos[lo:hi]
 
-        total_hits = hits_b73 + hits_mo17 + hits_sh
-        ig_n_b73spec[row]  += int(hits_b73.sum())
-        ig_n_mo17spec[row] += int(hits_mo17.sum())
-        ig_n_shared[row]   += int(hits_sh.sum())
-        ig_n_no_peak[row]  += int(np.sum(total_hits == 0))
+            hits_b73  = _count_peak_hits_per_position(pos_in_prom, pb73[0],  pb73[1])
+            hits_mo17 = _count_peak_hits_per_position(pos_in_prom, pmo17[0], pmo17[1])
+            hits_sh   = _count_peak_hits_per_position(pos_in_prom, psh[0],   psh[1])
+            total     = hits_b73 + hits_mo17 + hits_sh
 
-ig_n_genotype_spec = ig_n_b73spec + ig_n_mo17spec
-ig_n_total         = ig_n_b73spec + ig_n_mo17spec + ig_n_shared
+            n_b73[row]  += int(hits_b73.sum())
+            n_mo17[row] += int(hits_mo17.sum())
+            n_sh[row]   += int(hits_sh.sum())
+            n_none[row] += int(np.sum(total == 0))
 
+    geno_spec = n_b73 + n_mo17
+    total     = geno_spec + n_sh
+    p = label  # column prefix
+    return {
+        f'n_{p}_b73spec':      n_b73,
+        f'n_{p}_mo17spec':     n_mo17,
+        f'n_{p}_shared':       n_sh,
+        f'n_{p}_no_peak':      n_none,
+        f'n_{p}_genotype_spec':geno_spec,
+        f'n_{p}_total':        total,
+    }
+
+# Process each variant type
+VCF_INPUTS = [
+    (VCF_SMALL, 'small_indel'),
+    (VCF_LARGE, 'large_indel'),
+    (VCF_SNP,   'snp'),
+]
+
+all_var_cols = {}   # prefix -> result dict
+for vcf_path, label in VCF_INPUTS:
+    print(f"   Loading {Path(vcf_path).name} ...", flush=True)
+    vcf_by_chr = _load_vcf_positions(vcf_path)
+    n_vars = sum(len(v) for v in vcf_by_chr.values())
+    print(f"     {n_vars:,} variants", flush=True)
+    result = _variant_peak_overlaps(vcf_by_chr, label)
+    all_var_cols.update(result)
+    # Quick enrichment check for genotype-specific peak overlap
+    geno_col = result[f'n_{label}_genotype_spec']
+    n_g_hit  = int((geno_col[is_gxe_arr]  > 0).sum())
+    n_b_hit  = int((geno_col[is_bg_arr]   > 0).sum())
+    from scipy.stats import fisher_exact as fe
+    or_v, p_v = fe([[n_g_hit, n_gxe - n_g_hit],
+                    [n_b_hit, n_bg  - n_b_hit]], alternative='greater')
+    print(f"     Genotype-specific peak overlap: "
+          f"GxE {n_g_hit}/{n_gxe} ({100*n_g_hit/n_gxe:.1f}%) "
+          f"vs BG {n_b_hit}/{n_bg} ({100*n_b_hit/n_bg:.1f}%)  "
+          f"OR={or_v:.3f}  Fisher p={p_v:.4g}")
+
+# ── Write dap_seq_per_gene.tsv (DAP counts + all variant x peak columns) ──────
+for col, arr in all_var_cols.items():
+    proms[col] = arr
+
+var_col_order = []
+for _, label in VCF_INPUTS:
+    for suffix in ('b73spec', 'mo17spec', 'shared', 'no_peak', 'genotype_spec', 'total'):
+        var_col_order.append(f'n_{label}_{suffix}')
+
+col_order = col_order_dap + var_col_order
+proms[col_order].to_csv(f"{RESULTS}/dap_seq_per_gene.tsv", sep='\t', index=False)
+print(f"\n   Saved dap_seq_per_gene.tsv ({len(proms):,} genes, {len(col_order)} columns)")
+
+# Keep indel_dap_overlap_per_gene.tsv for backward compatibility (small indels only)
 olap_df = pd.DataFrame({
-    'gene':           proms['gene'].values,
-    'is_gxe':         is_gxe_arr,
-    'is_bg':          is_bg_arr,
-    'n_b73spec':      ig_n_b73spec,
-    'n_mo17spec':     ig_n_mo17spec,
-    'n_shared':       ig_n_shared,
-    'n_no_peak':      ig_n_no_peak,
-    'n_genotype_spec':ig_n_genotype_spec,
-    'n_total':        ig_n_total,
+    'gene':            proms['gene'].values,
+    'is_gxe':          is_gxe_arr,
+    'is_bg':           is_bg_arr,
+    'n_b73spec':       all_var_cols['n_small_indel_b73spec'],
+    'n_mo17spec':      all_var_cols['n_small_indel_mo17spec'],
+    'n_shared':        all_var_cols['n_small_indel_shared'],
+    'n_no_peak':       all_var_cols['n_small_indel_no_peak'],
+    'n_genotype_spec': all_var_cols['n_small_indel_genotype_spec'],
+    'n_total':         all_var_cols['n_small_indel_total'],
 })
 olap_df.to_csv(f"{RESULTS}/indel_dap_overlap_per_gene.tsv", sep='\t', index=False)
-print(f"   Saved indel_dap_overlap_per_gene.tsv ({len(olap_df):,} genes)")
-
-# Quick enrichment check
-g = olap_df[olap_df['is_gxe']]
-b = olap_df[olap_df['is_bg']]
-n_g_hit = (g['n_genotype_spec'] > 0).sum()
-n_b_hit = (b['n_genotype_spec'] > 0).sum()
-from scipy.stats import fisher_exact as fe
-or_id, p_id = fe([[n_g_hit, len(g)-n_g_hit], [n_b_hit, len(b)-n_b_hit]])
-print(f"   Indel×DAP enrichment: GxE {n_g_hit}/{len(g)} "
-      f"({100*n_g_hit/len(g):.1f}%) vs BG {n_b_hit}/{len(b)} "
-      f"({100*n_b_hit/len(b):.1f}%)  OR={or_id:.3f}  Fisher p={p_id:.4g}")
+print(f"   Saved indel_dap_overlap_per_gene.tsv (small indels, backward compat)")
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 print(f"\n{'='*60}")
 print(f"Done in {(time.time()-t0)/60:.1f} min")
 print(f"Outputs:")
-print(f"  {RESULTS}/dap_seq_per_gene.tsv")
+print(f"  {RESULTS}/dap_seq_per_gene.tsv  (DAP peaks + variant x peak overlaps for all 3 variant types)")
 print(f"  {RESULTS}/dap_seq_per_tf.tsv")
-print(f"  {RESULTS}/indel_dap_overlap_per_gene.tsv")
+print(f"  {RESULTS}/indel_dap_overlap_per_gene.tsv  (small indels only, backward compat)")
 print(f"\nVerification (expected from original analysis):")
 print(f"  dap_seq_per_gene.tsv: ~11,637 rows")
 print(f"  dap_seq_per_tf.tsv: 197-198 TFs")
-print(f"  Indel×DAP OR ≈ 1.52, Fisher p ≈ 0.007")

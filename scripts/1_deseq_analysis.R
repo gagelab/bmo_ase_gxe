@@ -56,9 +56,9 @@ counts <- as.matrix(counts_raw[, -1])
 rownames(counts) <- geneids
 
 # Drop two NC observations to keep the dataset balanced.
-# A10 and A11 were dropped in the original analysis; models fail with them
-# included due to imbalance in the Environment:sampleID design term.
-drops <- c("A10", "A11")
+# A11 and H11 were duplicates of C11 and G12, respectively - collected from the same
+#  plot as backup samples.
+drops <- c("A11", "H11")
 meta2   <- meta %>% filter(!LibraryID %in% drops)
 counts2 <- counts[, !grepl(paste0(drops, collapse = "|"), colnames(counts))]
 
@@ -278,36 +278,36 @@ message("G gene IDs written to data/G_gene_IDs.txt")
 # FIGURE: GxE scatter (MO_Log2FC vs NC_Log2FC)
 # ------------------------------------------------------------------------------
 
-pthresh_plot <- padj_thresh  # colour by padj < 0.1
-
-p_scatter <- ggplot(mapping = aes(MO_Log2FC, NC_Log2FC)) +
-  geom_point(
-    data = toPlot %>% filter(is.na(padj) | padj >= pthresh_plot),
-    size = 0.5, color = "gray"
-  ) +
-  geom_point(
-    data = toPlot %>%
-      filter(!is.na(padj) & padj < pthresh_plot) %>%
-      arrange(desc(padj)) %>%
-      mutate(neg_log_padj = pmin(-log10(padj), 3)),
-    size = 0.5,
-    mapping = aes(color = neg_log_padj)
-  ) +
-  scale_color_continuous(
-    breaks = seq(1, 3, 0.5),
-    labels = c("1.0", "1.5", "2.0", "2.5", "\u2265 3.0"),
-    name   = expression(-log[10](p[adj]))
-  ) +
-  theme_classic() +
-  labs(
-    x        = expression(paste(Log[2](Alt/Ref), " in MO")),
-    y        = expression(paste(Log[2](Alt/Ref), " in NC")),
-    title    = sprintf("GxE-ASE genes (padj < %.1f, n = %d)",
-                       pthresh_plot, length(sig_ge)),
-    subtitle = sprintf("Background: %d pre-filtered genes", length(bg_genes))
-  ) +
-  coord_cartesian(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5))
-
-ggsave(file.path(FIGURES_DIR, "gxe_scatter_padj01.pdf"), p_scatter,
-       width = 5, height = 4.5)
-message("Scatter plot saved.")
+# pthresh_plot <- padj_thresh  # colour by padj < 0.1
+# 
+# p_scatter <- ggplot(mapping = aes(MO_Log2FC, NC_Log2FC)) +
+#   geom_point(
+#     data = toPlot %>% filter(is.na(padj) | padj >= pthresh_plot),
+#     size = 0.5, color = "gray"
+#   ) +
+#   geom_point(
+#     data = toPlot %>%
+#       filter(!is.na(padj) & padj < pthresh_plot) %>%
+#       arrange(desc(padj)) %>%
+#       mutate(neg_log_padj = pmin(-log10(padj), 3)),
+#     size = 0.5,
+#     mapping = aes(color = neg_log_padj)
+#   ) +
+#   scale_color_continuous(
+#     breaks = seq(1, 3, 0.5),
+#     labels = c("1.0", "1.5", "2.0", "2.5", "\u2265 3.0"),
+#     name   = expression(-log[10](p[adj]))
+#   ) +
+#   theme_classic() +
+#   labs(
+#     x        = expression(paste(Log[2](Alt/Ref), " in MO")),
+#     y        = expression(paste(Log[2](Alt/Ref), " in NC")),
+#     title    = sprintf("GxE-ASE genes (padj < %.1f, n = %d)",
+#                        pthresh_plot, length(sig_ge)),
+#     subtitle = sprintf("Background: %d pre-filtered genes", length(bg_genes))
+#   ) +
+#   coord_cartesian(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5))
+# 
+# ggsave(file.path(FIGURES_DIR, "gxe_scatter_padj01.pdf"), p_scatter,
+#        width = 5, height = 4.5)
+# message("Scatter plot saved.")

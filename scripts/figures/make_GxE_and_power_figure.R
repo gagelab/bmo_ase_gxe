@@ -62,6 +62,12 @@ signchange_fig = sig_genes %>%
        y = expression(Log[2](Mo17/B73)),
        color = expression(-log[10](p[adj])))
 
+# Test for difference between categories in abs magnitude of location change:
+sig_genes %>%
+  mutate(category = ifelse(sign_change, "Sign change", "Magnitude change")) %>%
+  dplyr::select(GeneID, category, padj, MO_Log2FC, NC_Log2FC) %>%
+  mutate(diff = abs(MO_Log2FC - NC_Log2FC)) %>% wilcox.test(diff ~ category, data=.)
+
 # Subsetting figure
 subset_fig = ggplot(subsetting_results, aes(N, nSig, group=N)) +
   geom_boxplot(outliers = FALSE) +
@@ -81,3 +87,4 @@ scatter_fig + guide_area() + signchange_fig + plot_spacer() + subset_fig +
   guides(color = guide_colorbar(barwidth = unit(0.1, "in"), 
                                barheight = unit(1.5, "in")))
 ggsave("figures/1_GxE_genes_and_subsample.png", width=10, height=4.5)
+ggsave("figures/1_GxE_genes_and_subsample.pdf", width=10, height=4.5)
