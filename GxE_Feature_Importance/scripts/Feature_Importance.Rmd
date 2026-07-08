@@ -1,0 +1,605 @@
+---
+title: "Feature Importance GxE"
+author: "Ty Thomas"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE, 
+                      comment = TRUE, out.width="110%", 
+                      cache = TRUE,
+                      cache.path = "../../../bmo_ase_gxe_nogit/Feature_importance_cache/", 
+                      fig.path = "../../../bmo_ase_gxe_nogit/Feature_importance_cache/Figures/",
+                      results='asis')
+
+library(tidyverse)
+library(patchwork)
+library(pander)
+library(DT)
+library(tidymodels)
+library(glmnet)
+library(vip)
+library(doParallel)
+library(broom)
+library(knitr)
+library(kableExtra)
+library(themis)
+library(Boruta)
+library(ggpattern)
+
+theme_set(theme_bw()) 
+set.seed(27597)
+
+select <- dplyr::select
+mutate <- dplyr::mutate
+
+source("Functions_Feature_Importance.R")
+```
+
+
+
+
+## Read Data
+
+The code below reads the data in.
+
+```{r}
+# Read in Data
+sv <- read_tsv("../data/sv_per_gene.tsv") |> select(-is_bg, -strand)
+dap <- read_tsv("../data/dap_seq_per_gene.tsv") |> select(-gene_class, -is_bg, -prom_s, -prom_e, -strand) |> mutate(across(everything(), ~ replace_na(.x, 0)))
+
+
+# Combine the two together and order the columns
+sv_dap <- left_join(sv, dap, by=c("gene", "chr", "is_gxe")) |> select(-gene, -chr) |> 
+  mutate(n_sv_total = n_sv_total, .before = n_small_indel)
+
+dap1 <- dap |> select(-gene, -chr)
+
+sv1 <- sv |> select(-gene, -chr) 
+
+# Make all characters factors
+sv_dap_clean <- sv_dap |> 
+  mutate(
+    is_gxe = as.factor(is_gxe),
+    across(where(is.character) | where(is.logical), as.factor)
+  )
+
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+# {.tabset}
+
+
+## Stats reference
+
+### Modeling and Statistical Metrics Reference Guide
+
+This reference table outlines the different modeling frameworks, the statistical metrics used to evaluate feature importance and standalone predictive power, and how to interpret their values.
+
+```{r reference_table, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Set pander options for clean document rendering
+panderOptions('table.alignment.default', 'left')
+panderOptions('table.split.table', Inf) # Prevents table from wrapping/splitting
+
+ref_data <- tibble(
+  `Model / Analysis Type` = c(
+    "Logistic Regression Baseline (GLM)",
+    "LASSO Regression",
+    "Support Vector Machine (SVM)",
+    "Random Forest (Ranger)",
+    "Boruta Feature Selection Wrapper",
+    "Univariate Predictive Capacity",
+    "Information Theory Analysis"
+  ),
+  `Metric Used` = c(
+    "Absolute Z-Score (|z-statistic|)",
+    "Coefficient Magnitude",
+    "Permutation Drop in ROC AUC",
+    "Native Permutation Score",
+    "Mean Importance (Z-Score) & Normalized Hits (normHits)",
+    "Univariate ROC AUC Score",
+    "Mutual Information (MI) Score"
+  ),
+  `How to Read It` = c(
+    "**High = Good** (More statistically significant)",
+    "**High = Good** (Stronger direct predictive weight)",
+    "**High = Good** (Feature is critical to boundary accuracy)",
+    "**High = Good** (Feature is heavily utilized across trees)",
+    "**Focus on Final Decision Column**<br>**meanImp:** Higher = more reliable signal.<br>**normHits:** % of runs it beat random shadow noise.",
+    "**0.5 = Random Guessing**<br>**1.0 = Perfect Separation**",
+    "**0.0 = Completely Independent**<br>**Higher = More Shared Info**"
+  ),
+  `Brief Definition` = c(
+    "Measures how many standard deviations a feature's estimated coefficient is away from zero. It identifies standard parametric significance.",
+    "The absolute value of the model's optimized weight. Features with coefficients shrunk exactly to zero are completely filtered out by the penalty.",
+    "Calculated by shuffling a feature's values in out-of-fold data and measuring the resulting drop in model accuracy. A massive drop means the model relies heavily on that feature.",
+    " Shuffles a feature's values internally using Out-of-Bag (OOB) data during tree construction to measure how much it reduces overall node impurity.",
+    "Compares real feature importance against randomized 'shadow' features over multiple iterations. Standardizes raw importance into a Z-score (meanImp) and uses a Binomial test on hit rates (normHits) to categorize features.",
+    "Evaluates a single feature's standalone capability to separate the target groups (e.g., GxE vs non-GxE) without interacting with any other variables.",
+    "Measures the total amount of overlapping information shared between a predictor and the target variable, successfully capturing both linear and highly complex non-linear relationships."
+  ),
+  `Important Context & Nuances` = c(
+    "Prone to breaking or yielding extreme values/NAs when features are highly correlated (multicollinearity).",
+    "Automatically handles multicollinearity by choosing one dominant feature from a highly correlated group and discarding the rest.",
+    "Model-agnostic and highly robust, but computationally expensive because it must physically re-predict data for every single variable shuffled.",
+    "Natively copes with highly correlated features, but will spread the 'credit' across them, which can make individual scores look lower than they honestly are.",
+    "Gives a definitive 'Confirmed' or 'Rejected' label. Highly resilient to noise, but a feature can be statistically 'Confirmed' with a low Z-score if its weak signal is perfectly consistent.",
+    "Your baseline check. If all individual features hover near 0.50, the dataset lacks an obvious, straightforward standalone signal.",
+    "Measured in bits. Excellent for checking if a feature has a non-linear relationship (like a U-shape) that standard correlations completely miss."
+  )
+)
+
+# Render the table cleanly for HTML output
+pander(ref_data, caption = "Summary of Modeling Methods and Feature Importance Metrics")
+
+```
+
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+
+## Base Data Models {.tabset}
+
+### Structural Variants
+
+TL;DR:
+
+- Between all 4 models, the each variable shows importance at least once. 
+- `n_small_indel` is consistently strong agross all 4 models. 
+- Model roc_auc between 0.56 and 0.60
+
+```{r}
+SV_Models_All<- run_all_mods(sv1, Group_title = "Structural Variants")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+
+### DAP_seq
+
+TL;DR:
+
+- LASSO is the best model, roc_auc 0.59, while other models are between 0.54 and 0.56
+- LASSO being the best identifies 3 very strong factors, `n_small_indel_b73spec`, `n_snp_b73_spec`, and `n_small_indel_no_peak`
+- The models don't share the same "most important" features. The only shared feature in the top 6 of each model is `frac_diff`
+
+```{r}
+DAP_Models_All<- run_all_mods(dap1, Group_title = "Dap_seq")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+### Combined features
+
+TL;DR:
+
+- LASSO is the best model, roc_auc 0.6, while other models are between 0.54 and 0.57
+- models don't share features in common. 
+
+```{r}
+SV_DAP_Models_All<- run_all_mods(sv_dap, Group_title = "Combined Features")
+
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+
+## Individual Predictive Power
+
+TL;DR:
+
+- Looking at the first table, there are 9 factors with AUC > 0.550. 8 have mutual information score above 0. this is because `n_sv_total` and `n_SNP` are highly correlated.
+- `n_small_indel` is the most predictive of `is_gxe`. 
+- When modeling using only the "best" features, the models don't increase in accuracy. 
+
+```{r}
+
+sv_dap_clean <- clean_dataset(sv_dap)
+predictive_signals <- calculate_predictive_metrics(sv_dap_clean, "is_gxe")
+
+pander::pander(predictive_signals, caption = "Standalone Predictive Capacity per Feature for is_gxe")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+### Features with individual AUC > 0.550
+
+
+```{r}
+# selecting the best AUC features
+best_AUC <- sv_dap |> 
+  select(is_gxe, n_small_indel, n_SNP, n_snp_total, n_small_indel_no_peak,  n_snp_shared , n_small_indel_total, n_snp_no_peak, frac_diff)
+
+Best_AUC_Models<- run_all_mods(best_AUC, Group_title = "Individual AUC > 0.550")
+
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+
+## Summarizing Features: Feature Totals vs Individuals {.tabset}
+
+This Section separates out columns that are derived from the sums of other columns (totals), and columns that are not (individuals) to remove any strong correlations that may impact models. 
+
+```{r}
+#separating fetures into totals and individuals
+totals_cols<- c("n_large_indel_total" , "n_small_indel_total", "n_snp_total", "n_total", "n_diff", "n_small_indel_genotype_spec", "n_large_indel_genotype_spec", "n_snp_genotype_spec", "n_sv_total")
+
+dap_T <- dap1 |> 
+  select(any_of(totals_cols), is_gxe)
+
+dap_I <- dap1 |> 
+  select(-any_of(totals_cols))
+
+
+sv_T <- sv1 |> 
+  select(any_of(totals_cols), is_gxe)
+
+sv_I <- sv1 |> 
+  select(-any_of(totals_cols))
+
+
+sv_dap_T <- sv_dap |> 
+  select(any_of(totals_cols), is_gxe)
+
+sv_dap_I <- sv_dap |> 
+  select(-any_of(totals_cols))
+```
+
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+### SV: Totals
+
+```{r}
+#SV_Models_T<- run_all_mods(sv_T, Group_title = "SV - Totals")
+```
+
+This model will not run as there is only one variable. 
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+### SV: Individuals
+
+- `n_small_indel` is consistantly the better of the factors. 
+
+```{r}
+SV_Models_I<- run_all_mods(sv_I, Group_title = "SV - Individuals")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+### DAP: Totals
+
+- other than LASSO, `n_snp_total` is top two. 
+- `n_total` and `n_small_indel_total` are also of interest
+
+
+```{r}
+DAP_Models_T<- run_all_mods(dap_T, Group_title = "DAP - Totals")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+
+### DAP: Individuals
+
+- `n_small_indel_no_peak` and `frac_diff` are interesting
+
+```{r}
+DAP_Models_I<- run_all_mods(dap_I, Group_title = "DAP - Individuals")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+### Combined: Totals
+
+- `n_sv_total` is the best in all models. The first time having a consistant best
+
+```{r}
+SV_DAP_Models_T<- run_all_mods(sv_dap_T, Group_title = "comb - Totals")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+### Combined: Individuals
+
+`n_small_indel_no_peak`
+
+```{r}
+SV_DAP_Models_I<- run_all_mods(sv_dap_I, Group_title = "comb - Individuals")
+```
+
+<hr style="border: 1px solid #4e5d6c; margin-top: 40px; margin-bottom: 40px;">
+
+
+
+## Boruta
+
+
+```{r}
+# ==============================================================================
+# 1. INITIALIZATION AND BORUTA RUN
+# ==============================================================================
+
+# Standardize and format data types uniformly across variables (factors/numerics)
+sv_dap <- clean_dataset(sv_dap)
+
+# Execute the Boruta wrapper feature selection using 250 iterative random forest runs.
+# mcAdj = TRUE strictly applies Bonferroni corrections for high-dimensional testing.
+bo_try <- Boruta(is_gxe~., data=sv_dap, mcAdj = TRUE, maxRuns = 250)
+
+# Generate a quick base-R boxplot visualizing real features vs. shadow attribute benchmarks
+plot(bo_try)
+
+# Generate a quick trace plot showing feature importance progression across the 250 runs
+plotImpHistory(bo_try)
+
+# Render an interactive HTML data table showing ranked attribute importance metrics
+DT::datatable(attStats(bo_try) |> arrange(-meanImp))
+
+
+# ==============================================================================
+# 2. DATA EXTRACTION AND RESTRUCTURING FOR CUSTOM PLOTTING
+# ==============================================================================
+
+# Extract summary stats, rank by mean importance, and convert row names to a dedicated column
+bo_tab <- attStats(bo_try) |> arrange(-meanImp) |> 
+  mutate(Features = rownames(attStats(bo_try) |> arrange(-meanImp)))
+
+# Extract the full numerical history of Z-scores across all iterations into a dataframe
+bo_hist <- bo_try[["ImpHistory"]] |> as.data.frame() 
+
+# Pivot the history from a wide layout into a tidy long format for ggplot compatibility
+bo_hist2 <- bo_hist |> pivot_longer(cols = colnames(bo_hist), names_to = "Features", values_to = "Importance")
+
+# Join historical run data with categorical summary decisions, omitting benchmark shadow features
+bo_all <- bo_hist2 |> 
+  left_join(bo_tab, by = "Features") |> 
+  filter(!Features %in% c("shadowMax", "shadowMean", "shadowMin")) 
+  
+
+# ==============================================================================
+# 3. GEOM BOXPLOT & BARPLOT VISUALIZATIONS
+# ==============================================================================
+
+# Plot A: Vertical Boxplots tracking full Z-score distribution across iterations per feature
+ggplot(bo_all, aes(x = fct_reorder(Features, -meanImp), y = Importance, fill = decision))+
+         geom_boxplot(size = .3)+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))+
+  labs(y = "Importance", x = "Features", title = "Importance as calcualted from Boruta") +
+  scale_fill_manual(values = c("#b3b3b3", "#b3b3ff", "#ffb3b3"))
+
+# Plot B: Horizontal Bar Chart tracking static mean importance scores per feature
+ggplot(bo_all, aes(y = fct_reorder(Features, -meanImp), x = meanImp, fill = decision))+
+         geom_col()+
+  theme_classic()+
+  labs(y = "Importance", x = "Features", title = "Importance as calcualted from Boruta") +
+  scale_fill_manual(values = c("#b3b3b3", "#b3b3ff", "#ffb3b3"))
+
+
+# ==============================================================================
+# 4. DOWNSTREAM MACHINE LEARNING FILTERING & MODELLING
+# ==============================================================================
+
+# Isolate the subset of attributes formally marked as "Confirmed" by the Boruta algorithm
+best_ones <- attStats(bo_try) |> 
+  filter(decision == "Confirmed")
+
+# Subset the clean data matrix to retain only the target variable and Boruta-confirmed features
+sv_dap1 <- sv_dap |> 
+  select(all_of(c("is_gxe", rownames(best_ones))))
+
+# Train, cross-validate, and score the final 4 machine learning pipelines using the refined feature subset
+SV_DAP_Models_Boruta <- run_all_mods(sv_dap1, Group_title = "Boruta")
+```
+
+
+# Summary Plots
+
+```{r}
+# ==============================================================================
+# 1. CATEGORIZE AND BIN UNIVARIATE METRICS
+# ==============================================================================
+
+# Create discrete thresholds for the Univariate Area Under the Curve (AUC) scores
+predictive_signals1 <- predictive_signals |> 
+  mutate(
+    # Simplify the data source origins into descriptive category titles
+    Type = if_else(Source == "SV Only", "Structural Variant", "DAP-seq"),
+    
+    # Bin continuous AUC values into 3 distinct, publication-ready tiers
+    AUC = case_when(
+      Univariate_AUC >= 0.550 ~ "≥0.550",
+      Univariate_AUC < 0.550 & Univariate_AUC >= 0.525 ~ "0.525 to 0.550",
+      TRUE ~ "<0.525"
+    ),
+    
+    # Standardize the feature name variable handle for downstream merging
+    Features = Variable
+  )
+
+
+# ==============================================================================
+# 2. COMBINE UNIVARIATE DATA WITH BORUTA STATS
+# ==============================================================================
+
+# Merge the univariate screening dataframe with the Boruta importance summaries
+predictive_signals2 <- predictive_signals1 |> 
+  full_join(bo_tab, by = "Features") |> 
+  
+  # Keep only informative variables and drop non-specific aggregate features
+  filter(
+    Mutual_Information > 0,
+    !Features %in% c("n_total", "n_shared")
+  ) |> 
+  
+  # Duplicate the Boruta selection categorical column into a cleanly labeled header
+  mutate("Boruta Decision" = decision)
+
+
+# ==============================================================================
+# 3. PLOT 1: STANDARD GGPLOT HORIZONTAL BAR CHART (UNIVARIATE POWER)
+# ==============================================================================
+
+# Plot features ordered by individual AUC performance, colored by discrete thresholds
+ggplot(predictive_signals2, aes( y = fct_reorder(Variable, Univariate_AUC), x = Univariate_AUC, fill = fct_relevel(AUC,c("≥0.550", "0.525 to 0.550", "<0.525")))) +
+         geom_col()+
+  scale_fill_manual(values = c("#b3b3ff", "#b3b3b3", "#ffb3b3"))+
+  theme_classic()+
+  labs(x = "Univariate AUC", y = "Features", title = "Individual Predictive Power", fill = "AUC")+
+  geom_hline(yintercept = 0.5) # Reference line mapping a zero-predictive-value threshold
+
+
+# ==============================================================================
+# 4. PLOT 2: GGPATTERN GEOM (DUAL ENCODING IMPORTANCE & SELECTION STATUS)
+# ==============================================================================
+
+# Construct a high-density publication figure mapping mean importance scores (X-axis),
+# individual AUC categories (colors), and Boruta framework decisions (shading patterns)
+p1 <- ggplot(predictive_signals2, aes(
+    y = fct_reorder(Features, meanImp), 
+    x = meanImp, 
+    fill = fct_relevel(AUC, c("≥0.550", "0.525 to 0.550", "<0.525")),
+    pattern = fct_relevel(decision, c("Confirmed", "Tentative", "Rejected")) 
+  )) +
+  geom_col_pattern(
+    pattern_color = "grey95",       # Color tint of the fill pattern overlays
+    pattern_fill = "grey95",        
+    pattern_spacing = 0.02,         # Distance layout metrics separating lines/dots
+    pattern_density = 0.1          
+  ) +
+  theme_classic() + 
+  labs(
+    x = "Importance", 
+    y = "Features", 
+    title = "Feature Importance",
+    subtitle = "Based on Baruta and Individual Predictive Power (IPP)", # Note: "Baruta" typo here in title string
+    fill = "AUC From IPP", 
+    pattern = "Boruta Decision"       
+  ) +
+  scale_fill_manual(values = c("#b3b3ff", "#b3b3b3", "#ffb3b3")) +
+  scale_pattern_manual(values = c("none", "stripe", "circle")) + # Maps unique overlays to selection states
+  guides(fill = guide_legend(override.aes = list(pattern = "none"))) # Suppresses pattern clutter in the color legend
+
+p1
+# Export the customized dual-encoded figure to a local high-resolution file
+ggsave("../../../bmo_ase_gxe_nogit/Features_Boruta_AUC.png", p1)
+```
+
+
+# Summary Tables
+
+```{r}
+gxe_features_ref <- tibble(
+  `Feature Name` = c(
+    "n_snp_total",
+    "n_snp_no_peak",
+    "n_SNP",
+    "n_small_indel_no_peak",
+    "n_small_indel",
+    "n_small_indel_total",
+    "n_snp_shared",
+    "frac_diff"
+  ),
+  `Extended Feature Name` = c(
+    "Total Promoter SNPs (DAP Consolidated)",
+    "Promoter SNPs with No Peak Overlap",
+    "Total Baseline Promoter SNPs",
+    "Promoter Small Indels with No Peak Overlap",
+    "Total Baseline Promoter Small Indels",
+    "Total Promoter Small Indels (DAP Consolidated)",
+    "Promoter SNPs Overlapping Shared Peaks",
+    "Fraction of Genotype-Specific DAP Peaks"
+  ),
+  `Data Type` = c(
+    "DAP_seq",
+    "DAP_seq",
+    "Structural Variants",
+    "DAP_seq",
+    "Structural Variants",
+    "DAP_seq",
+    "DAP_seq",
+    "DAP_seq"
+  ),
+  `Boruta Importance` = c(
+    0.770, 
+    0.740, 
+    0.703, 
+    0.689, 
+    0.647, 
+    0.646, 
+    0.635, 
+    0.499
+  ),
+  `Univariate AUC` = c(
+    0.573, 
+    0.551, 
+    0.575, 
+    0.569, 
+    0.591, 
+    0.554, 
+    0.558, 
+    0.551
+  ),
+  `Mutual Information` = c(
+    0.0006, 
+    0.0002, 
+    0.0002, 
+    0.0002, 
+    0.0010, 
+    0.0003, 
+    0.0004, 
+    0.0011
+  ),
+  `Biological Description` = c(
+    "The total count of Single Nucleotide Polymorphisms (SNPs) located within the gene's promoter region (+/-500bp from the Transcription Start Site), mapped within the DAP-seq consolidated framework.",
+    "The count of promoter SNPs that do not physically overlap with any documented DAP-seq transcription factor binding peak, representing variants in non-binding promoter regions.",
+    "The total baseline count of B73/Mo17 SNPs detected within the gene's promoter region, capturing sequence divergence between the parent genotypes.",
+    "The count of small insertions or deletions (< 50 bp) in the promoter region that do not overlap with any DAP-seq transcription factor binding peak.",
+    "The total baseline count of small insertions or deletions (< 50 bp) detected within the gene's promoter region.",
+    "The total count of small insertions or deletions (< 50 bp) in the promoter region, tracked within the consolidated DAP-seq overlap architecture.",
+    "The count of promoter SNPs that physically overlap with shared DAP-seq peaks (transcription factor binding sites present in both the B73 and Mo17 genotypes).",
+    "The proportion of total transcription factor binding peaks in the promoter region that are genotype-specific (either B73-only or Mo17-only), serving as an index of localized regulatory divergence."
+  )
+)
+
+# Preview the complete table
+write_tsv(gxe_features_ref, file = "../../../bmo_ase_gxe_nogit/GxE_feature_importance.tsv", quote = "all")
+
+pander(gxe_features_ref)
+```
+
+
+
+```{r}
+# Create the consolidated data frame with all three conditions
+model_comparison <- tibble(
+  Model = c("LASSO", "Logistic_Regression", "Random_Forest", "SVM"),
+  All_Features_AUC = c(0.5967, 0.5774, 0.5708, 0.5438),
+  Boruta_Confirmed_Features_AUC = c(0.6028, 0.5834, 0.5706, 0.5469),
+  Univariate_Filtered_Features_AUC = c(0.5924, 0.5825, 0.5451, 0.5672)
+)
+
+write_tsv(model_comparison, file = "../../../bmo_ase_gxe_nogit/GxE_prediction_models_AUC.tsv")
+
+pander(model_comparison)
+```
+
+
+
+# Session info
+
+```{r}
+sessionInfo()
+```
+
