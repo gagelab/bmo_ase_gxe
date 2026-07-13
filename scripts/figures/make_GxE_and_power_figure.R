@@ -43,7 +43,10 @@ sig_genes <- deseq_results %>%
   filter(padj < 0.1) %>%
   mutate(delta = NC_Log2FC - MO_Log2FC,
          avg_log2fc = (MO_Log2FC + NC_Log2FC) / 2,
-         sign_change = sign(MO_Log2FC) != sign(NC_Log2FC))
+         sign_change = sign(MO_Log2FC) != sign(NC_Log2FC),
+         single_env = case_when(MO_padj < 0.1 & NC_padj > 0.1 ~ TRUE,
+                                MO_padj > 0.1 & NC_padj < 0.1 ~ TRUE,
+                                TRUE ~ FALSE))
 
 signchange_fig = sig_genes %>%
   mutate(category = ifelse(sign_change, "Sign change", "Magnitude change")) %>%
@@ -63,6 +66,9 @@ signchange_fig = sig_genes %>%
        color = expression(-log[10](p[adj])))
 
 # Test for difference between categories in abs magnitude of location change:
+sig_genes %>%
+  mutate(category = ifelse(sign_change, "Sign change", "Magnitude change"))%>%
+  count(category)
 sig_genes %>%
   mutate(category = ifelse(sign_change, "Sign change", "Magnitude change")) %>%
   dplyr::select(GeneID, category, padj, MO_Log2FC, NC_Log2FC) %>%
@@ -88,3 +94,8 @@ scatter_fig + guide_area() + signchange_fig + plot_spacer() + subset_fig +
                                barheight = unit(1.5, "in")))
 ggsave("figures/1_GxE_genes_and_subsample.png", width=10, height=4.5)
 ggsave("figures/1_GxE_genes_and_subsample.pdf", width=10, height=4.5)
+
+subsetting_results %>%
+  group_by(N) %>%
+  summarise(medianSig = median(nSig),
+            medianPerc = median(nSig/nTest))

@@ -120,12 +120,57 @@ coords_v5  <- unlist(coords_v5[keep_sites])
 
 merged       <- merged[keep_sites, ]
 geno_meta_v5 <- geno_meta_v4[keep_sites, ]
-geno_meta_v5$`#CHROM` <- as.numeric(seqnames(coords_v5))
+
+# IMPORTANT: seqnames(coords_v5) is an Rle of a *factor*. as.numeric() on a
+# factor returns the integer level CODE (levels ordered however
+# seqlevels(coords_v5) happens to be ordered after liftOver -- NOT the
+# chromosome number). Using that directly silently scrambles chromosome
+# labels. Extract the chromosome number from the seqname STRING instead
+# (handles "1"/"chr1"/etc. regardless of factor level order).
+chr_chr <- as.character(seqnames(coords_v5))
+chr_num <- as.numeric(gsub("\\D", "", chr_chr))
+
+# Drop the old "#CHROM" column entirely and replace it with a plain-named
+# "CHROM" column. The "#" in the original name is fine for $-access, but
+# some dplyr/rlang versions choke on it in tidy-eval (group_by/arrange/
+# rename/etc.) with "object '#CHROM' not found". To sidestep that class of
+# issue altogether, the chromosome-number handling below uses base R
+# (order/tapply) rather than dplyr verbs.
+geno_meta_v5$`#CHROM` <- NULL
+geno_meta_v5$CHROM    <- chr_num
 geno_meta_v5$POS      <- as.numeric(start(coords_v5))
-geno_meta_v5          <- arrange(geno_meta_v5, `#CHROM`, POS)
-merged                <- merged[order(as.numeric(seqnames(coords_v5)),
-                                      as.numeric(start(coords_v5))), ]
+
+ord          <- order(chr_num, as.numeric(start(coords_v5)))
+geno_meta_v5 <- geno_meta_v5[ord, ]
+merged       <- merged[ord, ]
 message(sprintf("   %d SNPs retained after liftover", nrow(merged)))
+
+# Sanity check: per-chromosome max POS should be <= the true B73 NAM v5
+# chromosome length (catches any future chromosome-labeling regressions).
+fai_file <- file.path(DATA, "Zm-B73-REFERENCE-NAM-5.0.fa.gz.fai")
+if (file.exists(fai_file)) {
+  fai_raw <- read.table(fai_file, sep = "\t", stringsAsFactors = FALSE,
+                        col.names = c("seq","len","offset","linebases","linewidth"))
+  fai_raw <- fai_raw[grepl("^chr[0-9]+$", fai_raw$seq), ]
+  fai_lens <- setNames(fai_raw$len, as.numeric(sub("chr", "", fai_raw$seq)))
+
+  chr_max <- tapply(geno_meta_v5$POS, geno_meta_v5$CHROM, max)
+  bad_chrs <- character(0)
+  for (chr_label in names(chr_max)) {
+    true_len <- fai_lens[[chr_label]]
+    if (!is.null(true_len) && chr_max[[chr_label]] > true_len) {
+      bad_chrs <- c(bad_chrs, chr_label)
+    }
+  }
+  if (length(bad_chrs) > 0) {
+    warning(sprintf(
+      "Chromosome label sanity check FAILED for chr %s: max marker position exceeds chromosome length. Check seqnames(coords_v5) handling.",
+      paste(bad_chrs, collapse = ", ")
+    ))
+  } else {
+    message("   Chromosome label sanity check passed (all max positions <= chromosome length).")
+  }
+}
 
 # ── 6. Impute with qtl2 HMM ───────────────────────────────────────────────────
 message("6. Imputing genotypes with qtl2 HMM ...")
@@ -136,7 +181,7 @@ geno_char <- matrix("-", nrow = nrow(merged), ncol = ncol(merged),
 geno_char[!is.na(merged) & merged == 0] <- "A"
 geno_char[!is.na(merged) & merged == 2] <- "B"
 
-marker_ids <- paste0("S", geno_meta_v5$`#CHROM`, "_", geno_meta_v5$POS)
+marker_ids <- paste0("S", geno_meta_v5$CHROM, "_", geno_meta_v5$POS)
 rownames(geno_char) <- marker_ids
 geno_for_qtl2 <- t(geno_char)   # samples x markers
 
@@ -151,7 +196,7 @@ write.csv(
 # Use physical position (Mb * 4 expansion) as a proxy genetic map for IBM RILs
 gmap <- data.frame(
   marker = marker_ids,
-  chr    = geno_meta_v5$`#CHROM`,
+  chr    = geno_meta_v5$CHROM,
   pos    = geno_meta_v5$POS / 1e6 * 4
 )
 write.csv(gmap, file.path(qtl2_dir, "gmap.csv"), row.names = FALSE, quote = FALSE)
