@@ -35,4 +35,4 @@ EOF
 
 echo "Sample string: $SAMPLES_STRING"
 
-bcftools view -s "$SAMPLES_STRING" -Oz -o test_ZeaGBSv27_IBM_raw_AGPv4.vcf.gz "$FULL_GENO_FILE"
+bcftools view -s "$SAMPLES_STRING" -Oz -o data/ZeaGBSv27_IBM_raw_AGPv4.vcf.gz "$FULL_GENO_FILE"
