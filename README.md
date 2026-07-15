@@ -4,6 +4,8 @@ This repository contains code to accompany the paper _Sequence variation and tra
 * `scripts/`: Contains scripts for data analysis and figure generation
 * `data/`: contains small data files needed for analysis
 * `GxE_Feature_Importance/`: contains notebooks from ML models to predict transcriptional GxE status from sequence and DAP-seq features
+* `ase_analysis/`: contains scripts for assigning RNAseq reads to parental alleles and generating read counts
+* `variant_features/`: contains scripts for aligning and calling variants between B73 and Mo17
 
 Contact:
  - Joseph Gage: jlgage at ncsu dot edu
