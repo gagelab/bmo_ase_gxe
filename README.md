@@ -1,4 +1,4 @@
-This repository contains code to accompany the paper _Sequence variation and transcription factor binding contribute to GxE for gene expression in maize_ by Deb et al (2026).
+This repository contains code to accompany the paper _Cis-regulatory variation and transcription factor binding contribute to allelic genotype-by-environment interactions for gene expression in maize_ by Deb et al (2026).
 
 * `RERUN_WORKFLOW.md`: This file contains information needed to rerun the analyses presented in the paper. Start here for information on downloading publicly available data from other publications that were used in our study, as well as an overview of each analysis step.
 * `scripts/`: Contains scripts for data analysis and figure generation
