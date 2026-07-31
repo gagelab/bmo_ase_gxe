@@ -176,7 +176,7 @@ snp_test_results = tibble(
 # Make row titles 
 r1 = ggplot() +
   annotate("text",
-           label="Allele-specific DAP-seq peaks:",
+           label="Genotype-specific DAP-seq peaks:",
            x=-0.13,
            y=0.5,
            size=5.5,
@@ -190,7 +190,7 @@ r1 = ggplot() +
 
 r2 = ggplot(aes(fill=is_gxe), data=dap_gene) +
   annotate("text",
-           label="Small indels overlapping allele-specific DAP-seq peaks:",
+           label="Small indels overlapping genotype-specific DAP-seq peaks:",
            x=-0.13,
            y=0.5,
            size=5.5,
@@ -204,7 +204,7 @@ r2 = ggplot(aes(fill=is_gxe), data=dap_gene) +
 
 r3 = ggplot(aes(fill=is_gxe), data=dap_gene) +
   annotate("text",
-           label="SNPs overlapping allele-specific DAP-seq peaks:",
+           label="SNPs overlapping genotype-specific DAP-seq peaks:",
            x=-0.13,
            y=0.5,
            size=5.5,
@@ -247,7 +247,7 @@ layout = c("AAA
                          # heights = c(1,4,1,4),
                          design = layout) &
   # plot_annotation(tag_levels = "A") & 
-  scale_fill_manual(labels=c("Background Genes (n=11,389)", "GxE ASE Genes (n=248)"), 
+  scale_fill_manual(labels=c("Background Genes (n=11,334)", "AxE Genes (n=219)"), 
                     values=c("black", "blue")) &
   theme(legend.position = "right",
         legend.title = element_blank(),

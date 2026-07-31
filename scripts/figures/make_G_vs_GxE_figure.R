@@ -15,9 +15,9 @@ OR_fig = ggplot(results %>%
   geom_col(alpha=0.3) + 
   facet_wrap(~metric, nrow=1) +
   theme_classic() +
-  scale_fill_manual(labels=c(sprintf("Genotype effect alone (n=%i)", nG), 
-                             sprintf("GxE effect alone (n=%i)", nGE),
-                             sprintf("Genotype and GxE effect (n=%i)", nGGE)), 
+  scale_fill_manual(labels=c(sprintf("Allele effect alone (n=%i)", nG), 
+                             sprintf("AxE effect alone (n=%i)", nGE),
+                             sprintf("Allele and AxE effect (n=%i)", nGGE)), 
                     values=c("red", "blue", "purple"),
                     name="Genes with significant:") +
   labs(y="Odds Ratio") +

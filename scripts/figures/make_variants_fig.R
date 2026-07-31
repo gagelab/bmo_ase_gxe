@@ -84,7 +84,7 @@ mw_dists = ggplot(sv_continuous,
 
 (fisher_bars / mw_dists) + 
   patchwork::plot_layout(guides="collect") & 
-  scale_fill_manual(labels=c("Background Genes (n=11,389)", "GxE ASE Genes (n=248)"), 
+  scale_fill_manual(labels=c("Background Genes (n=11,334)", "AxE Genes (n=219)"), 
                     values=c("black", "blue")) &
   theme(legend.position = "bottom",
         legend.title = element_blank())

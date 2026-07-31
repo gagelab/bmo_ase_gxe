@@ -18,8 +18,8 @@ ggplot(aes(MO_Log2FC, NC_Log2FC, color=-log10(padj), alpha=alpha)) +
   labs(x=expression(paste(Log[2](Mo17/B73), " in MO")),
        y=expression(paste(Log[2](Mo17/B73), " in NC")),
        color=expression(-log[10](p[adj]))) +
-  lims(x=c(-2,2),
-       y=c(-2,2)) +
+  lims(x=c(-4,4),
+       y=c(-4,4)) +
   scale_color_viridis_c(option="plasma", end=0.9) +
   coord_fixed() +
   guides(alpha = "none", color="none")
@@ -79,7 +79,7 @@ subset_fig = ggplot(subsetting_results, aes(N, nSig, group=N)) +
   geom_boxplot(outliers = FALSE) +
   geom_jitter(height=0, width=0.1, alpha=0.25) +
   labs(x="Number of samples from each environment",
-       y="Significant GxE genes") +
+       y="Significant AxE genes") +
   theme_classic()
 
 scatter_fig + guide_area() + signchange_fig + plot_spacer() + subset_fig +
@@ -95,6 +95,8 @@ scatter_fig + guide_area() + signchange_fig + plot_spacer() + subset_fig +
 ggsave("figures/1_GxE_genes_and_subsample.png", width=10, height=4.5)
 ggsave("figures/1_GxE_genes_and_subsample.pdf", width=10, height=4.5)
 
+# Get number and proportion of significant genes for each 
+#  subsampling N
 subsetting_results %>%
   group_by(N) %>%
   summarise(medianSig = median(nSig),
