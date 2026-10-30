@@ -503,73 +503,108 @@ ggsave("../../../bmo_ase_gxe_nogit/Features_Boruta_AUC.png", p1)
 gxe_features_ref <- tibble(
   `Feature Name` = c(
     "n_snp_total",
+    "n_snp_shared",
+    "n_sv_total",
+    "n_small_indel_total",
     "n_snp_no_peak",
     "n_SNP",
-    "n_small_indel_no_peak",
     "n_small_indel",
-    "n_small_indel_total",
-    "n_snp_shared",
-    "frac_diff"
+    "frac_diff",
+    "n_small_indel_shared",
+    "n_snp_genotype_spec",
+    "n_diff",
+    "n_snp_b73spec",
+    "n_b73spec"
   ),
   `Extended Feature Name` = c(
     "Total Promoter SNPs (DAP Consolidated)",
+    "Promoter SNPs Overlapping Shared Peaks",
+    "Total Promoter Structrual Variants",
+    "Total Promoter Small Indels (DAP Consolidated)",
     "Promoter SNPs with No Peak Overlap",
     "Total Baseline Promoter SNPs",
-    "Promoter Small Indels with No Peak Overlap",
     "Total Baseline Promoter Small Indels",
-    "Total Promoter Small Indels (DAP Consolidated)",
-    "Promoter SNPs Overlapping Shared Peaks",
-    "Fraction of Genotype-Specific DAP Peaks"
+    "Fraction of Genotype-Specific DAP Peaks",
+    "Promoter Small Indels with Overlapping Shared Peaks",
+    "Total SNPs Overlapping any Genotype-specific Peak",
+    "Total Genotype-specific Peaks (B73-specific + Mo17-specific)",
+    "SNPs Overlapping B73-specific Peaks",
+    "Count of B73-specific DAP Peaks in Promoter"
   ),
   `Data Type` = c(
     "DAP_seq",
     "DAP_seq",
     "Structural Variants",
     "DAP_seq",
+    "DAP_seq",
     "Structural Variants",
+    "Structural Variants",
+    "DAP_seq",
+    "DAP_seq",
+    "DAP_seq",
     "DAP_seq",
     "DAP_seq",
     "DAP_seq"
   ),
   `Boruta Importance` = c(
-    0.770, 
-    0.740, 
-    0.703, 
-    0.689, 
-    0.647, 
-    0.646, 
-    0.635, 
-    0.499
+    0.753,
+    0.659,
+    0.654,
+    0.647,
+    0.640,
+    0.639,
+    0.570,
+    0.570,
+    0.545,
+    0.512,
+    0.499,
+    0.390,
+    0.355
   ),
   `Univariate AUC` = c(
-    0.573, 
-    0.551, 
-    0.575, 
-    0.569, 
-    0.591, 
-    0.554, 
-    0.558, 
-    0.551
+    0.592, 
+    0.580, 
+    0.572, 
+    0.571,
+    0.553,
+    0.568,
+    0.586,
+    0.584,
+    0.561,
+    0.574,
+    0.573,
+    0.566,
+    0.557
   ),
   `Mutual Information` = c(
     0.0006, 
-    0.0002, 
-    0.0002, 
-    0.0002, 
-    0.0010, 
-    0.0003, 
     0.0004, 
-    0.0011
+    0.0003, 
+    0.0005,
+    0.0001,
+    0.0001,
+    0.0001,
+    0.0018,
+    0.0005,
+    0.0005,
+    0.0003,
+    0.0004,
+    0.0005
   ),
   `Biological Description` = c(
     "The total count of Single Nucleotide Polymorphisms (SNPs) located within the gene's promoter region (+/-500bp from the Transcription Start Site), mapped within the DAP-seq consolidated framework.",
-    "The count of promoter SNPs that do not physically overlap with any documented DAP-seq transcription factor binding peak, representing variants in non-binding promoter regions.",
-    "The total baseline count of B73/Mo17 SNPs detected within the gene's promoter region, capturing sequence divergence between the parent genotypes.",
-    "The count of small insertions or deletions (< 50 bp) in the promoter region that do not overlap with any DAP-seq transcription factor binding peak.",
-    "The total baseline count of small insertions or deletions (< 50 bp) detected within the gene's promoter region.",
+    "The count of promoter SNPs that physically overlap with documented DAP-seq transcription factor binding peaks for both B73 and Mo17 genotypes, representing variants in promoter regions.",
+    "The count of B73/Mo17 structural varients detected within the gene's promoter region, capturing sequence divergence between the parent genotypes.",
     "The total count of small insertions or deletions (< 50 bp) in the promoter region, tracked within the consolidated DAP-seq overlap architecture.",
-    "The count of promoter SNPs that physically overlap with shared DAP-seq peaks (transcription factor binding sites present in both the B73 and Mo17 genotypes).",
-    "The proportion of total transcription factor binding peaks in the promoter region that are genotype-specific (either B73-only or Mo17-only), serving as an index of localized regulatory divergence."
+    "The count of promoter SNPs that do not physically overlap with any documented DAP-seq transcription factor binding peak, representing variants in non-binding promoter regions.",
+    "The total baseline count of SNPs detected within the gene's promoter region.",
+    "The total baseline count of small insertions or deletions (< 50 bp) detected within the gene's promoter region.",
+    "The proportion of total transcription factor binding peaks in the promoter region that are genotype-specific (either B73-only or Mo17-only), serving as an index of localized regulatory divergence.",
+    "The count of small insertions or deletions (< 50 bp) in the promoter region that overlap with DAP-seq transcription factor binding peak.",
+    "The count of promoter SNPs that physically overlap with genotype specific DAP-seq peaks (transcription factor binding sites present in the B73 or Mo17 genotype).",
+    "The count of genotype specific promoter sites (transcription factor binding sites present in the B73 and Mo17 genotype).",
+    "The count of promoter SNPs that physically overlap with B73 DAP-seq peaks.",
+    "The count of DAP-seq peaks in the promoter region of B73."
   )
 )
 
@@ -585,9 +620,9 @@ pander(gxe_features_ref)
 # Create the consolidated data frame with all three conditions
 model_comparison <- tibble(
   Model = c("LASSO", "Logistic_Regression", "Random_Forest", "SVM"),
-  All_Features_AUC = c(0.5967, 0.5774, 0.5708, 0.5438),
-  Boruta_Confirmed_Features_AUC = c(0.6028, 0.5834, 0.5706, 0.5469),
-  Univariate_Filtered_Features_AUC = c(0.5924, 0.5825, 0.5451, 0.5672)
+  All_Features_AUC = c(0.5667, 0.5805, 0.5926, 0.5642),
+  Boruta_Confirmed_Features_AUC = c(0.5783, 0.5887, 0.5870, 0.5616),
+  Univariate_Filtered_Features_AUC = c(0.5930, 0.5981, 0.5755, 0.5784)
 )
 
 write_tsv(model_comparison, file = "../../../bmo_ase_gxe_nogit/GxE_prediction_models_AUC.tsv")
