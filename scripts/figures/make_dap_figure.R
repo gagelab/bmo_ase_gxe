@@ -53,7 +53,7 @@ dap_binary = dap_gene %>%
               size=3) +
     theme_classic() +
     theme(legend.position="none") +
-    scale_x_continuous(breaks=seq(0, 5), labels = c(as.character(0:4), "\u22655")) +
+    scale_x_continuous(breaks=seq(0, 5), labels = c(as.character(0:4), "5+")) +
     labs(y="Density", x="Number of genotype-specific\nDAP peaks",
          title="B") +
     # Make extra space for the p-value text
@@ -118,7 +118,7 @@ indel_test_results = tibble(
     labs(x="Number of small indels overlapping\ngenotype-specific DAP peaks",
          y="Density",
          title="E") +
-    scale_x_continuous(breaks=seq(0, 5), labels = c(as.character(0:4), "\u22655")) +
+    scale_x_continuous(breaks=seq(0, 5), labels = c(as.character(0:4), "5+")) +
     scale_y_continuous(expand=expansion(mult=c(0,0.25))) 
 )
 
@@ -168,7 +168,7 @@ snp_test_results = tibble(
     labs(x="Number of SNPs overlapping\ngenotype-specific DAP peaks",
          y="Density",
          title="G") +
-    scale_x_continuous(breaks=seq(0, 5), labels = c(as.character(0:4), "\u22655")) +
+    scale_x_continuous(breaks=seq(0, 5), labels = c(as.character(0:4), "5+")) +
     scale_y_continuous(expand=expansion(mult=c(0,0.25)))
 )
 

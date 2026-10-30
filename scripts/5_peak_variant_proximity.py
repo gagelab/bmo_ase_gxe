@@ -9,7 +9,8 @@ for nearby sequence variation. The prediction is that B73-specific and
 Mo17-specific peaks have more Mo17/B73 variants within a flanking window
 than shared peaks do.
 
-For each peak that overlaps a gene's ±500 bp promoter window, count all
+For each peak that overlaps a gene's promoter window (as written by
+scripts/3_dap_seq_analysis.py; -2000/+500 bp around the TSS), count all
 Mo17 variants (SNPs + small indels + large indels) within ±FLANK bp of
 the peak boundaries. Compare counts between peak types using Mann-Whitney U.
 

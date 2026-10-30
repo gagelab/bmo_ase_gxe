@@ -11,9 +11,9 @@ sv_continuous = sv %>%
   mutate(Category = case_when(Category == "small_indel" ~ "Small Indels",
                               Category == "large_indel" ~ "Large Indels",
                               Category == "SNP" ~ "SNPs")) %>%
-  mutate(Count = case_when(Category == "Large Indels" & Count > 4 ~ 4,
-                           Category == "Small Indels" & Count > 20 ~ 20,
-                           Category == "SNPs" & Count > 50 ~ 50,
+  mutate(CountForFig = case_when(Category == "Large Indels" & Count > 4 ~ 4,
+                           Category == "Small Indels" & Count > 30 ~ 30,
+                           Category == "SNPs" & Count > 150 ~ 150,
                            TRUE ~ Count))
 
 # Make clean tibble for processing binary proportion and fisher test
@@ -67,9 +67,19 @@ fisher_bars = ggplot(sv_binary, aes(x=is_gxe, y=Proportion, fill=is_gxe)) +
   # Make extra space for the p-value text
   scale_y_continuous(expand=expansion(mult=c(0,0.25))) +
   labs(y="Proportion of genes\nwith \u22651 variant")
+
+add_plus_to_last <- function(breaks) {
+  # Convert breaks to character
+  labels <- as.character(breaks)
+  # Append "+" to the very last label
+  if (length(labels) > 0) {
+    labels[length(labels)] <- paste0(labels[length(labels)], "+")
+  }
+  labels
+}
 mw_dists = ggplot(sv_continuous,
-                  aes(Count, after_stat(density), fill=is_gxe)) +
-  geom_histogram(alpha=0.3, position="identity", binwidth = 1) +
+                  aes(CountForFig, after_stat(density), fill=is_gxe)) +
+  geom_histogram(alpha=0.3, position="identity", binwidth = \(x) if(max(x, na.rm=TRUE) > 50){5}else{1}) +
   geom_text(x=-Inf, y=Inf, hjust=-0.1, vjust=1.5,
             mapping=aes(label=sprintf("MW p=%0.1g", MW_p)), 
             inherit.aes = FALSE, data=test_results,
@@ -80,7 +90,9 @@ mw_dists = ggplot(sv_continuous,
   # Remove facet label strip since this will be on the bottom
   theme(strip.text = element_blank()) +
   # Make extra space for the p-value text
-  scale_y_continuous(expand=expansion(mult=c(0,0.25)))
+  scale_y_continuous(expand=expansion(mult=c(0,0.25))) +
+  scale_x_continuous(labels = add_plus_to_last)
+
 
 (fisher_bars / mw_dists) + 
   patchwork::plot_layout(guides="collect") & 

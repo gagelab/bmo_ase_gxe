@@ -30,7 +30,9 @@ BASE_DIR  = "./"
 DATA_DIR  = f"{BASE_DIR}/data"
 RESULTS   = f"{BASE_DIR}/results"
 FIGURES   = f"{BASE_DIR}/figures"
-PROMO_WIN = 500  # bp from TSS
+PROMO_UP   = 2000  # bp upstream of TSS; must match scripts/3_dap_seq_analysis.py
+PROMO_DOWN = 500   # bp downstream of TSS; must match scripts/3_dap_seq_analysis.py
+BIN_WIDTH  = 100   # distance-from-TSS bin width (bp)
 
 VCF_FILES = {
     "small_indel": f"{DATA_DIR}/Mo17_toB73v5_paf_syri_noStartPOS0_INDELs_less50bp.vcf",
@@ -158,11 +160,17 @@ strands  = dap["strand"].values
 is_gxe   = dap["is_gxe"].values
 is_bg    = dap["is_bg"].values
 
-# TSS: prom_s + PROMO_WIN for + strand; prom_e - PROMO_WIN for - strand
-tss = np.where(strands == "+", prom_s + PROMO_WIN, prom_e - PROMO_WIN)
+# Recover the TSS from the promoter window written by script 3.
+# Use the downstream edge, which is never floored at 0:
+#   '+' strand: window [tss - PROMO_UP, tss + PROMO_DOWN)  -> tss = prom_e - PROMO_DOWN
+#   '-' strand: window [tss - PROMO_DOWN, tss + PROMO_UP)  -> tss = prom_s + PROMO_DOWN
+tss = np.where(strands == "+", prom_e - PROMO_DOWN, prom_s + PROMO_DOWN)
 
-bin_edges  = np.arange(0, PROMO_WIN + 1, 100)
-bin_labels = [f"{b}-{b+100}" for b in bin_edges[:-1]]
+# Signed distance bins covering the whole window (negative = upstream).
+# Each bin is (d_lo, d_hi) in transcript orientation.
+dist_bins = ([(-d - BIN_WIDTH, -d) for d in range(PROMO_UP - BIN_WIDTH, -1, -BIN_WIDTH)] +
+        [(d, d + BIN_WIDTH) for d in range(0, PROMO_DOWN, BIN_WIDTH)])
+bin_labels = [f"{lo} to {hi}" for lo, hi in dist_bins]
 
 # Pre-group gene indices by chromosome so the outer bin loop doesn't re-scan
 genes_by_chr = {}
@@ -173,7 +181,7 @@ all_bin_results = []   # collects rows across all variant classes
 
 for vcf_class, vcf_data in vcf_cache.items():
     print(f"\n  {vcf_class}:")
-    for b_start, b_end, label in zip(bin_edges[:-1], bin_edges[1:], bin_labels):
+    for (d_lo, d_hi), label in zip(dist_bins, bin_labels):
         has_var = np.zeros(len(dap), dtype=bool)
 
         for chrom, gene_idx in genes_by_chr.items():
@@ -183,8 +191,9 @@ for vcf_class, vcf_data in vcf_cache.items():
             g_tss     = tss[gene_idx]
             g_strands = strands[gene_idx]
 
-            win_s = np.where(g_strands == "+", g_tss - b_end,   g_tss + b_start)
-            win_e = np.where(g_strands == "+", g_tss - b_start, g_tss + b_end)
+            # map signed transcript-relative distances to genomic coordinates
+            win_s = np.where(g_strands == "+", g_tss + d_lo, g_tss - d_hi)
+            win_e = np.where(g_strands == "+", g_tss + d_hi, g_tss - d_lo)
 
             lo = np.searchsorted(pos_arr, win_s, side="left")
             hi = np.searchsorted(pos_arr, win_e, side="right")
@@ -195,7 +204,7 @@ for vcf_class, vcf_data in vcf_cache.items():
         all_bin_results.append(dict(
             variant_class=vcf_class,
             distance_band=label,
-            d_start=b_start,
+            d_start=d_lo,
             pct_gxe=pct_gxe,
             pct_bg=pct_bg,
         ))
@@ -248,14 +257,14 @@ for ax_i, vcf_class in enumerate(["small_indel", "large_indel", "SNP", "sv_total
     ax2.hist(b_counts.clip(upper=cap), bins=bins, color=colors["Background"],
              alpha=0.4, density=True, label=f"BG (n={len(b_counts)})",
              histtype="step", lw=1.5)
-    ax2.set_xlabel(f"Variants per promoter (±{PROMO_WIN} bp)")
+    ax2.set_xlabel(f"Variants per promoter (-{PROMO_UP}/+{PROMO_DOWN} bp)")
     ax2.set_ylabel("Density")
     ax2.legend(fontsize=7)
     ax2.set_title(f"{chr(68+ax_i)}  Mean: GxE={r['mean_gxe']:.2f}, "
                   f"BG={r['mean_bg']:.2f}", fontsize=8)
 
 fig.suptitle(f"Structural Variant Enrichment in Promoters of GxE-ASE Genes\n"
-             f"±{PROMO_WIN} bp from TSS | B73/Mo17 SV calls (syri)",
+             f"-{PROMO_UP}/+{PROMO_DOWN} bp around TSS | B73/Mo17 SV calls (syri)",
              fontsize=11, fontweight="bold")
 out_fig = f"{FIGURES}/sv_enrichment_figure.png"
 fig.savefig(out_fig, dpi=150, bbox_inches="tight")
@@ -277,7 +286,7 @@ for ax2, vcf_class in zip(axes2, dist_classes):
     ax2.plot(x, sub["pct_bg"],  "s--", color=colors["Background"], lw=1.5, label="Background")
     ax2.set_xticks(x)
     ax2.set_xticklabels(sub["distance_band"], rotation=30, ha="right", fontsize=8)
-    ax2.set_xlabel("Distance from TSS (bp, upstream)")
+    ax2.set_xlabel("Position relative to TSS (bp; negative = upstream)")
     ax2.set_ylabel("% genes with variant")
     ax2.set_title(f"{class_labels.get(vcf_class, vcf_class)}\nby distance from TSS",
                   fontsize=9)
@@ -288,7 +297,7 @@ for ax2, vcf_class in zip(axes2, dist_classes):
     ax2_r.set_ylabel("Difference (GxE - BG, %)", fontsize=8)
     ax2_r.legend(loc="upper right", fontsize=7)
 
-fig2.suptitle(f"Variant Enrichment by Distance from TSS  |  ±{PROMO_WIN} bp window",
+fig2.suptitle(f"Variant Enrichment by Distance from TSS  |  -{PROMO_UP}/+{PROMO_DOWN} bp window",
               fontsize=10, fontweight="bold")
 fig2.tight_layout()
 out_fig2 = f"{FIGURES}/sv_distance_figure.png"
