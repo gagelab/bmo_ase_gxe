@@ -1,4 +1,4 @@
-setwd("~/projects/bmo_ase/gxe_ase/")
+# setwd("~/projects/bmo_ase/gxe_ase/")
 
 library(tidyverse)
 library(magrittr)

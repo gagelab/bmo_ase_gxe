@@ -5,7 +5,9 @@
 Generates three DAP-seq derived result files from raw peak files + annotation:
 
   1. results/dap_seq_per_gene.tsv
-       Per-gene peak counts and variant-x-peak overlaps in ±500 bp promoter windows
+       Per-gene peak counts and variant-x-peak overlaps in promoter windows
+       spanning PROMO_UP bp upstream to PROMO_DOWN bp downstream of the TSS
+       (strand-aware; default -2000/+500)
        (one row per universe gene).
        Columns: chr, prom_s, prom_e, strand, gene, is_gxe, is_bg,
                 n_b73_spec, n_shared, n_mo17_spec, n_diff, n_total, frac_diff, gene_class,
@@ -66,7 +68,8 @@ GFF        = f"{DATA}/annotation.gff"
 VCF_SMALL  = f"{DATA}/Mo17_toB73v5_paf_syri_noStartPOS0_INDELs_less50bp.vcf"
 VCF_LARGE  = f"{DATA}/Mo17_toB73v5_paf_syri_noStartPOS0_INDELs_more50bp.vcf"
 VCF_SNP    = f"{DATA}/Mo17_toB73v5_paf_syri_noStartPOS0_SNPs.vcf"
-PROMO_WIN  = 500   # bp on each side of TSS (0-based coords)
+PROMO_UP   = 2000  # bp upstream of TSS (strand-aware, 0-based coords)
+PROMO_DOWN = 500   # bp downstream of TSS
 
 # ── 1. Load gene sets ─────────────────────────────────────────────────────────
 print("1. Loading gene sets...", flush=True)
@@ -77,7 +80,7 @@ n_gxe, n_bg = len(gxe_genes), len(bg_genes)
 print(f"   GxE: {n_gxe:,}  Background: {n_bg:,}  Universe: {len(universe):,}")
 
 # ── 2. Parse GFF → promoter windows ──────────────────────────────────────────
-print(f"\n2. Parsing promoter windows from GFF (±{PROMO_WIN} bp)...", flush=True)
+print(f"\n2. Parsing promoter windows from GFF (-{PROMO_UP}/+{PROMO_DOWN} bp)...", flush=True)
 rows = []
 with open(GFF) as fh:
     for line in fh:
@@ -96,8 +99,14 @@ with open(GFF) as fh:
         s = int(p[3]) - 1   # GFF is 1-based; convert to 0-based
         e = int(p[4])        # 0-based exclusive
         tss    = s if strand == '+' else e
-        prom_s = max(0, tss - PROMO_WIN)
-        prom_e = tss + PROMO_WIN
+        # Upstream is 5' on the gene's strand: lower coordinates for '+',
+        # higher coordinates for '-'. Window is [prom_s, prom_e), 0-based.
+        if strand == '+':
+            prom_s = max(0, tss - PROMO_UP)
+            prom_e = tss + PROMO_DOWN
+        else:
+            prom_s = max(0, tss - PROMO_DOWN)
+            prom_e = tss + PROMO_UP
         rows.append({'chr': p[0], 'prom_s': prom_s, 'prom_e': prom_e,
                      'strand': strand, 'gene': gid})
 

@@ -6,13 +6,17 @@ co-localize with GxE phenotypic QTL bins from the IBM population scan.
 
 Analysis pipeline:
   1. Load QTL scan results (IBM_GxE_results.tsv); combine p-values across
-     14 non-redundant traits with Stouffer's method; apply BH-FDR correction.
+     14 non-redundant traits with Stouffer's method. BH-FDR is computed for
+     reference but a naive raw p-value threshold (SIG_P_THRESH, default
+     0.05) is used to flag "signal" bins -- BH-FDR across ~15k bins/trait
+     is far too conservative for this screening-level overlap test.
   2. Assign each background gene to a recombination bin by midpoint.
   3. Binary enrichment: Fisher's exact + chromosome-stratified permutation
-     (are GxE-ASE genes more likely to fall in a significant QTL bin?).
+     (are GxE-ASE genes more likely to fall in a bin with raw
+     stouffer_GEp < SIG_P_THRESH?).
   4. Continuous enrichment: Spearman and partial Spearman (controlling for
      baseMean) of bin QTL signal vs ASE -log10(p).
-  5. Trait-stratified binary enrichment (per trait).
+  5. Trait-stratified binary enrichment (per trait, raw GEp < SIG_P_THRESH).
 
 Reads:
   results/IBM_GxE_results.tsv         (output of 7_map_gxe_qtl.R)
@@ -59,6 +63,15 @@ BG_IDS    = f"{DATA}/background_gene_IDs.txt"
 
 SEED    = 2126
 N_PERM  = 10_000
+
+# Naive (uncorrected) p-value threshold used to flag a recombination bin as
+# "showing GxE QTL signal". This analysis is a screening-level overlap test,
+# not a genome-wide significance scan, so BH-FDR across ~15k bins/trait is
+# far too conservative (it would require raw p <~ 3e-6 for the strongest
+# bin to survive). A flat threshold gives a consistent, interpretable
+# definition of "signal" for both the combined (Stouffer) bins and the
+# per-trait bins.
+SIG_P_THRESH = 0.01
 
 # 14 non-redundant traits (drop redundant phenology and size composites)
 KEEP_TRAITS = [
@@ -110,10 +123,15 @@ for (chr_, start, end), row in qtl_pivot.iterrows():
     })
 
 bin_stouffer = pd.DataFrame(stouffer_rows)
+# BH-FDR is computed and retained in the output for reference, but "signal"
+# bins are defined below via a naive raw p-value threshold (SIG_P_THRESH) --
+# BH-FDR across ~15k bins/trait is far too conservative for this
+# screening-level overlap test.
 _, fdr, _, _ = multipletests(bin_stouffer["stouffer_GEp"].values, method="fdr_bh")
 bin_stouffer["stouffer_FDR"] = fdr
-n_sig = (bin_stouffer["stouffer_FDR"] < 0.05).sum()
-print(f"   {len(bin_stouffer):,} testable bins; {n_sig:,} significant (BH-FDR < 0.05)")
+n_sig = (bin_stouffer["stouffer_GEp"] < SIG_P_THRESH).sum()
+print(f"   {len(bin_stouffer):,} testable bins; {n_sig:,} with raw stouffer_GEp < {SIG_P_THRESH} "
+      f"(naive threshold, not BH-FDR)")
 print(f"   Stouffer GEp median: {bin_stouffer['stouffer_GEp'].median():.4f}")
 
 # ── 2. Parse gene coordinates from GFF ───────────────────────────────────────
@@ -195,7 +213,7 @@ ase_full["stouffer_GEp"] = assigned["stouffer_GEp"]
 ase_full["stouffer_FDR"] = assigned["stouffer_FDR"]
 ase_full["bin_start"]    = assigned["bin_start"].astype(int)
 ase_full["bin_end"]      = assigned["bin_end"].astype(int)
-ase_full["bin_sig"]      = (assigned["stouffer_FDR"] < 0.05) & in_bin
+ase_full["bin_sig"]      = (assigned["stouffer_GEp"] < SIG_P_THRESH) & in_bin
 
 # BUG FIX: include both bg and sig genes (they are mutually exclusive sets,
 # so isin(bg) alone would exclude all 248 GxE genes)
@@ -203,7 +221,7 @@ ase_bg = ase_full[ase_full["GeneID"].isin(bg | sig) & ase_full["in_bin"]].copy()
 ase_bg["is_gxe"] = ase_bg["GeneID"].isin(sig)
 print(f"   {len(ase_bg):,} universe genes assigned to a bin")
 print(f"   GxE-ASE genes in background+bin: {ase_bg['is_gxe'].sum():,}")
-print(f"   In significant QTL bins:          {ase_bg['bin_sig'].sum():,}")
+print(f"   In bins with raw p < {SIG_P_THRESH}:   {ase_bg['bin_sig'].sum():,}")
 
 # ── 5. Binary enrichment ─────────────────────────────────────────────────────
 print("\n" + "="*65, flush=True)
@@ -216,7 +234,7 @@ b = int(( is_gxe & ~in_sig).sum())
 c = int((~is_gxe &  in_sig).sum())
 d = int((~is_gxe & ~in_sig).sum())
 
-print(f"\n   Contingency table (BH-FDR < 0.05 QTL bins):")
+print(f"\n   Contingency table (raw stouffer_GEp < {SIG_P_THRESH} QTL bins):")
 print(f"   {'':20}  {'In sig bin':>10}  {'Not in sig bin':>14}")
 print(f"   {'GxE-ASE':20}  {a:>10,}  {b:>14,}")
 print(f"   {'Non-GxE':20}  {c:>10,}  {d:>14,}")
@@ -303,12 +321,12 @@ print("7. TRAIT-STRATIFIED BINARY ENRICHMENT", flush=True)
 trait_results = []
 for trait in KEEP_TRAITS:
     tq = qtl[qtl["trait"] == trait][["chr","start","end","GEp"]].dropna(subset=["GEp"])
-    _, fdr_t, _, _ = multipletests(tq["GEp"].values, method="fdr_bh")
-    tq = tq.copy(); tq["fdr"] = fdr_t
+    # Naive raw p-value threshold (see SIG_P_THRESH) -- BH-FDR across
+    # ~15k bins/trait is far too conservative for this screening test.
     sig_set = set(
-        zip(tq.loc[tq["fdr"] < 0.05, "chr"].astype(int),
-            tq.loc[tq["fdr"] < 0.05, "start"].astype(int),
-            tq.loc[tq["fdr"] < 0.05, "end"].astype(int))
+        zip(tq.loc[tq["GEp"] < SIG_P_THRESH, "chr"].astype(int),
+            tq.loc[tq["GEp"] < SIG_P_THRESH, "start"].astype(int),
+            tq.loc[tq["GEp"] < SIG_P_THRESH, "end"].astype(int))
     )
     if not sig_set:
         trait_results.append({"trait": trait, "n_sig_bins": 0,
@@ -395,10 +413,10 @@ fig.suptitle("GBS Recombination Bin Enrichment\n"
 # A — Stouffer p-value distribution
 ax = axes[0, 0]
 ax.hist(bin_stouffer["stouffer_GEp"], bins=50, color=COLORS["bg"], edgecolor="black", lw=0.4)
-ax.axvline(0.05, color="red", lw=1.5, ls="--", label="p = 0.05")
+ax.axvline(SIG_P_THRESH, color="red", lw=1.5, ls="--", label=f"p = {SIG_P_THRESH}")
 ax.set_xlabel("Stouffer combined GEp"); ax.set_ylabel("Bins")
 ax.set_title(f"(A) QTL signal per bin\n({len(bin_stouffer):,} bins, {len(KEEP_TRAITS)} traits)")
-ax.text(0.97, 0.97, f"BH-FDR < 0.05: {n_sig:,}", transform=ax.transAxes,
+ax.text(0.97, 0.97, f"raw p < {SIG_P_THRESH}: {n_sig:,}", transform=ax.transAxes,
         ha="right", va="top", fontsize=9)
 ax.legend(fontsize=8)
 
@@ -477,7 +495,7 @@ print(f"   Saved {fig_path}")
 print("\n" + "="*65, flush=True)
 print("FINAL SUMMARY", flush=True)
 print(f"  Testable bins:        {len(bin_stouffer):,}")
-print(f"  Significant QTL bins: {n_sig:,} (BH-FDR < 0.05)")
+print(f"  QTL bins with raw p < {SIG_P_THRESH}: {n_sig:,} (naive threshold, not BH-FDR)")
 print(f"  Background genes in bin: {len(ase_bg):,}  (GxE-ASE: {int(ase_bg['is_gxe'].sum())})")
 print(f"\n  BINARY:     OR={OR_obs:.4f}  Fisher p={p_fisher:.4f}  perm_p={perm_p:.4f}")
 print(f"  CONTINUOUS: Spearman r={r_sp:.4f} (p={p_sp:.4f}, perm_p={perm_p_sp:.4f})")

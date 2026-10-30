@@ -31,8 +31,6 @@
 #
 ################################################################################
 
-# setwd("/sessions/dazzling-dreamy-archimedes/mnt/bmo_ase/gxe_ase")
-
 library(tidyverse)
 library(magrittr)
 library(DESeq2)
@@ -48,27 +46,19 @@ FIGURES_DIR <- "figures"
 # DATA LOADING
 # ------------------------------------------------------------------------------
 
-meta <- read_tsv(file.path(DATA_DIR, "meta_for_DESeq2.txt")) %>%
-  rename("Condition" = "Environment")
+meta <- read_tsv(file.path(DATA_DIR, "meta_for_DESeq2.txt"))
 counts_raw <- read_tsv(file.path(DATA_DIR, "counts_for_DESeq2.txt"))
 geneids <- counts_raw$Geneid[, drop = TRUE]
 counts <- as.matrix(counts_raw[, -1])
 rownames(counts) <- geneids
 
-# Drop two NC observations to keep the dataset balanced.
-# A11 and H11 were duplicates of C11 and G12, respectively - collected from the same
-#  plot as backup samples.
-drops <- c("A11", "H11")
-meta2   <- meta %>% filter(!LibraryID %in% drops)
-counts2 <- counts[, !grepl(paste0(drops, collapse = "|"), colnames(counts))]
-
 # Add within-environment sample ID (runs 1:n_samples within each env)
-sampleID <- meta2 %>%
+sampleID <- meta %>%
   distinct(Environment, LibraryID) %>%
   group_by(Environment) %>%
   mutate(sampleID = 1:n())
 
-meta2 <- left_join(meta2, sampleID) %>%
+meta <- left_join(meta, sampleID) %>%
   mutate(
     sampleID    = factor(sampleID),
     Allele      = factor(Allele, levels = c("Ref", "Alt")),
@@ -76,7 +66,7 @@ meta2 <- left_join(meta2, sampleID) %>%
   )
 
 # Long-format counts for downstream pre-filter
-counts2_long <- counts2 %>%
+counts_long <- counts %>%
   as_tibble(rownames = "GeneID") %>%
   pivot_longer(-GeneID, names_to = "RowID", values_to = "Count")
 
@@ -99,11 +89,11 @@ counts2_long <- counts2 %>%
 # ------------------------------------------------------------------------------
 
 dds2 <- DESeqDataSetFromMatrix(
-  countData = counts2,
-  colData   = meta2,
+  countData = counts,
+  colData   = meta,
   design    = ~ Environment + Environment:sampleID + Environment:Allele
 )
-sizeFactors(dds2) <- rep(1, nrow(meta2))
+sizeFactors(dds2) <- rep(1, nrow(meta))
 dds2 <- DESeq(dds2)
 
 # Environment-specific allelic ratios (log2 Alt/Ref in each environment)
@@ -115,8 +105,8 @@ ge <- results(dds2, contrast = list("EnvironmentMO.AlleleAlt",
                                      "EnvironmentNC.AlleleAlt"))
 
 # Save DESeq2 objects for downstream analyses (co-expression VST extraction, etc.)
-save(mo_ratio, nc_ratio, ge, dds2, meta2, counts2,
-     file = file.path(DATA_DIR, "data/DESeq2_results.rdata"))
+save(mo_ratio, nc_ratio, ge, dds2, meta, counts,
+     file = file.path(DATA_DIR, "DESeq2_results.rdata"))
 message("DESeq2 results saved to data/DESeq2_results.rdata")
 
 # ------------------------------------------------------------------------------
@@ -180,7 +170,7 @@ tested_genes <- toPlot %>%
   pull(GeneID)
 
 # Explicit pre-filter: >10 counts in >5 sample×allele columns
-enough_counts <- counts2_long %>%
+enough_counts <- counts_long %>%
   group_by(GeneID) %>%
   summarise(n_above_10 = sum(Count > 10)) %>%
   filter(n_above_10 > 5) %>%
@@ -221,8 +211,8 @@ message("Gene sets written.")
 
 # Environment main effect (summed allele expression, ignores ASE)
 dds_e <- DESeqDataSetFromMatrix(
-  countData = counts2,
-  colData   = meta2,
+  countData = counts,
+  colData   = meta,
   design    = ~ Environment
 )
 dds_e  <- DESeq(dds_e)
